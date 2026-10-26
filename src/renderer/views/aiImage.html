@@ -1,0 +1,41 @@
+<div class="studio-card">
+  <div class="card-header-row">
+    <div class="card-header-left">
+      <h2>AI Image Generator</h2>
+      <p>Hasilkan banner promosi resolusi tinggi menggunakan DALL·E 3.</p>
+    </div>
+    <span class="model-tag">ChatGPT Plus (DALL·E 3)</span>
+  </div>
+
+  <div class="form-group">
+    <div class="form-label-row">
+      <label for="imagePromptInput" class="form-label">Deskripsi Prompt Gambar</label>
+      <span class="form-hint">Jelaskan tata letak visual secara detail</span>
+    </div>
+    <textarea id="imagePromptInput" rows="3" class="input-box" placeholder="Contoh: Modern 3D promotional Instagram banner for Canva Pro subscription..."></textarea>
+  </div>
+
+  <div class="form-group">
+    <div class="form-label-row"><label for="imageAspectRatio" class="form-label">Format Rasio Aspek</label></div>
+    <select id="imageAspectRatio" class="input-box">
+      <option value="4:5" selected>Potret 4:5 (Instagram Feed Vertikal)</option>
+      <option value="1:1">Persegi 1:1 (Feed Standar 1024x1024)</option>
+      <option value="9:16">Vertikal Penuh 9:16 (Story & Reels Cover)</option>
+      <option value="16:9">Lanskap 16:9 (Horizontal)</option>
+    </select>
+  </div>
+
+  <button type="button" id="btnRunImageGen" class="btn-execute" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+    <span>✨ Hasilkan Gambar AI Sekarang</span>
+  </button>
+
+  <div id="imageGenAlert" class="alert-card" style="margin-top: 14px;"></div>
+
+  <div id="imageResultBox" style="display: none; margin-top: 20px;">
+    <div class="form-label-row"><span class="form-label">Pratinjau Hasil Generasi Baru</span></div>
+    <div class="preview-img-wrapper"><img id="generatedImgTag" src="" alt="Output"></div>
+    <button type="button" id="btnQuickUseSchedule" class="btn-execute" style="margin-top: 12px;">
+      ➕ Masukkan Langsung ke Jadwal Postingan
+    </button>
+  </div>
+</div>

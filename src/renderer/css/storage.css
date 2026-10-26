@@ -1,0 +1,335 @@
+/* src/renderer/css/storage.css */
+
+/* ==========================================================================
+   1. GRID PENAMPUNGAN UMUM & GALERI GAMBAR AI
+   ========================================================================== */
+
+.storage-images-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+  gap: 14px;
+  min-height: calc(100vh - 220px);
+  max-height: none;
+  overflow-y: visible;
+  overflow-x: hidden;
+  padding: 14px 2px 36px 2px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.storage-images-grid::-webkit-scrollbar {
+  width: 6px;
+}
+
+.storage-images-grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.storage-images-grid::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 4px;
+}
+
+.storage-images-grid::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+.storage-images-grid img,
+.ai-image-right-col img {
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+.storage-item-card {
+  position: relative;
+  background: #141722;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 235px;
+  box-sizing: border-box;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.storage-item-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(99, 102, 241, 0.45);
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.2);
+}
+
+.storage-thumb-wrapper {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  background: #090c14;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.storage-thumb-wrapper img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block;
+  transition: transform 0.3s ease;
+}
+
+.storage-item-card:hover .storage-thumb-wrapper img {
+  transform: scale(1.03);
+}
+
+.storage-ratio-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(10, 15, 29, 0.75);
+  color: #e2e8f0;
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-weight: 700;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 2;
+}
+
+.storage-card-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #0f121d;
+  align-items: center;
+  margin-top: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.storage-card-actions button {
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-storage-use {
+  flex: 1;
+  height: 30px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f1f5f9;
+  transition: all 0.2s ease;
+}
+
+.btn-storage-use:hover {
+  background: var(--accent-primary, #6366f1);
+  color: #ffffff;
+  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.35);
+}
+
+.btn-storage-del {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  transition: all 0.2s ease;
+}
+
+.btn-storage-del:hover {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+  box-shadow: 0 2px 10px rgba(239, 68, 68, 0.4);
+}
+
+/* ==========================================================================
+   2. KARTU STORYBOARD & VIDEO (UKURAN & STYLE SERAGAM PERSIS)
+   ========================================================================== */
+
+.storage-card {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #090d16;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  aspect-ratio: 9 / 16;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  user-select: none;
+
+  /* Ukuran seragam presisi dengan frame storyboard */
+  flex: 0 0 145px !important;
+  width: 145px !important;
+  min-width: 145px !important;
+  max-width: 145px !important;
+  height: 258px !important;
+  max-height: 258px !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+}
+
+.storage-card img,
+.storage-card video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+}
+
+.storage-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: 0 10px 24px rgba(99, 102, 241, 0.25);
+}
+
+.storage-card-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(10, 15, 29, 0.35) 0%, rgba(10, 15, 29, 0.9) 100%);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 8px;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  z-index: 5;
+}
+
+.storage-card:hover .storage-card-overlay {
+  opacity: 1;
+}
+
+.btn-action-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 7px;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(79, 70, 229, 0.35);
+  transition: all 0.2s ease;
+}
+
+.btn-action-primary svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.btn-action-primary:hover {
+  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.5);
+  transform: scale(0.98);
+}
+
+.btn-action-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: auto;
+}
+
+.btn-action-delete svg {
+  width: 13px;
+  height: 13px;
+}
+
+.btn-action-delete:hover {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+  box-shadow: 0 3px 10px rgba(239, 68, 68, 0.5);
+  transform: scale(1.05);
+}
+
+/* ==========================================================================
+   3. CONTAINER BINGKAI HORIZONTAL (HAPUS JARAK KOSONG & SAMAKAN DENGAN STORYBOARD)
+   ========================================================================== */
+
+/* Pastikan pembungkus langsung dari .storage-card yang menjadi flex-row rapat */
+:has(> .storage-card) {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  justify-content: flex-start !important;
+  align-items: center !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+
+  background: #0d1322 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 14px !important;
+  padding: 16px !important;
+  margin-top: 10px !important;
+  margin-bottom: 24px !important;
+
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  gap: 14px !important;
+
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Hilangkan bingkai ganda jika container berada di dalam container lain */
+:has(> :has(> .storage-card)) {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+/* Scrollbar horizontal elegan */
+:has(> .storage-card)::-webkit-scrollbar {
+  height: 6px !important;
+}
+
+:has(> .storage-card)::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-radius: 999px !important;
+}
+
+:has(> .storage-card)::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border-radius: 999px !important;
+}
+
+:has(> .storage-card)::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4) !important;
+}

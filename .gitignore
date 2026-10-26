@@ -1,0 +1,488 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Virtual environments
+node_modules/
+venv/
+.pytest_cache/
+coverage/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Sessions and credential files
+sessions/
+storage/
+temp/
+
+# Generated content
+generated_images/
+generated_videos/
+videos_metadata.json
+profile_cache*.json
+showcase_cache*.json
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git configuration
+.git-credentials
+.gitconfig
+
+# Temporary and log files
+*.log
+*.tmp
+*.temp
+
+# Config files yang mungkin berisi kredensial
+config.json
+config.*.json
+
+# File yang mungkin berisi session data
+*.session.json
+*.cookie
+*.token
+
+# Cache files yang mungkin berisi data sensitif
+cache/
+*.cache
+
+# Document dan notebook yang mungkin berisi informasi sensitif
+*.md
+*.txt
+*.rst
+*.ipynb
+
+# File log aplikasi
+*.log
+app.log
+server.log
+
+# Artefak build
+build/
+dist/
+*.egg-info/
+*.so
+*.dylib
+
+# Database files
+*.sqlite
+*.db
+
+# File sesi browser
+*.session
+history
+history.*
+
+# File sesi terminal
+termhistory
+bash_history
+zsh_history
+
+# File memori yang mungkin berisi kata sandi
+.memories
+*.mem
+
+# File dump yang mungkin berisi kredensial
+dump.*
+core
+
+# File yang dihasilkan oleh editor yang mungkin berisi data sensitif
+*.swp
+*.swo
+*~
+
+# File git yang mungkin berisi informasi sensitif
+.git/*
+!/.git/**
+
+# File yang dihasilkan oleh kompiler yang mungkin berisi data sensitif
+*.o
+*.obj
+*.exe
+
+# File yang mungkin berisi kata sandi
+*.password
+*.passwd
+*.secret
+*.token
+*.key
+
+# File yang mungkin berisi informasi pribadi
+*.personal
+*.private
+*.confidential
+
+# File yang mungkin berisi informasi keuangan
+*.financial
+*.invoice
+*.receipt
+
+# File yang mungkin berisi informasi kesehatan
+*.medical
+*.health
+*.diagnosis
+
+# File yang mungkin berisi informasi lokasi
+*.location
+*.geolocation
+*.gps
+
+# File yang mungkin berisi informasi kontak
+*.contact
+*.phone
+*.email
+
+# File yang mungkin berisi informasi profil
+*.profile
+*.user
+*.account
+
+# File yang mungkin berisi informasi sesi
+*.session
+*.login
+*.logout
+
+# File yang mungkin berisi informasi autentikasi
+*.auth
+*.authentication
+*.credential
+
+# File yang mungkin berisi informasi otorisasi
+*.authorization
+*.permission
+*.role
+
+# File yang mungkin berisi informasi token
+*.token
+*.access_token
+*.refresh_token
+
+# File yang mungkin berisi informasi cookie
+*.cookie
+*.cookies
+
+# File yang mungkin berisi informasi header
+*.header
+*.headers
+
+# File yang mungkin berisi informasi query
+*.query
+*.queries
+
+# File yang mungkin berisi informasi body
+*.body
+*.bodies
+
+# File yang mungkin berisi informasi path
+*.path
+*.paths
+
+# File yang mungkin berisi informasi metode
+*.method
+*.methods
+
+# File yang mungkin berisi informasi status
+*.status
+*.statuses
+
+# File yang mungkin berisi informasi pesan
+*.message
+*.messages
+
+# File yang mungkin berisi informasi error
+*.error
+*.errors
+
+# File yang mungkin berisi informasi stack trace
+*.stack
+*.traceback
+*.trace
+
+# File yang mungkin berisi informasi debug
+*.debug
+*.debug.*
+
+# File yang mungkin berisi informasi log level
+*.log_level
+*.loglevel
+
+# File yang mungkin berisi informasi format log
+*.log_format
+*.logformat
+
+# File yang mungkin berisi informasi output log
+*.log_output
+*.logoutput
+
+# File yang mungkin berisi informasi input log
+*.log_input
+*.loginput
+
+# File yang mungkin berisi informasi config log
+*.log_config
+*.logconfig
+
+# File yang mungkin berisi informasi handler log
+*.log_handler
+*.loghandler
+
+# File yang mungkin berisi informasi filter log
+*.log_filter
+*.logfilter
+
+# File yang mungkin berisi informasi formatter log
+*.log_formatter
+*.logformatter
+
+# File yang mungkin berisi informasi level log
+*.log_level
+*.loglevel
+
+# File yang mungkin berisi informasi timestamp log
+*.log_timestamp
+*.logtimestamp
+
+# File yang mungkin berisi informasi thread log
+*.log_thread
+*.logthread
+
+# File yang mungkin berisi informasi process log
+*.log_process
+*.logprocess
+
+# File yang mungkin berisi informasi host log
+*.log_host
+*.loghost
+
+# File yang mungkin berisi informasi port log
+*.log_port
+*.logport
+
+# File yang mungkin berisi informasi address log
+*.log_address
+*.logaddress
+
+# File yang mungkin berisi informasi client log
+*.log_client
+*.logclient
+
+# File yang mungkin berisi informasi server log
+*.log_server
+*.logserver
+
+# File yang mungkin berisi informasi request log
+*.log_request
+*.logrequest
+
+# File yang mungkin berisi informasi response log
+*.log_response
+*.logresponse
+
+# File yang mungkin berisi informasi query log
+*.log_query
+*.logquery
+
+# File yang mungkin berisi informasi body log
+*.log_body
+*.logbody
+
+# File yang mungkin berisi informasi header log
+*.log_header
+*.logheader
+
+# File yang mungkin berisi informasi cookie log
+*.log_cookie
+*.logcookie
+
+# File yang mungkin berisi informasi authorization log
+*.log_authorization
+*.logauthorization
+
+# File yang mungkin berisi informasi user-agent log
+*.log_user_agent
+*.loguseragent
+
+# File yang mungkin berisi informasi accept log
+*.log_accept
+*.logaccept
+
+# File yangnya mungkin berisi informasi accept-encoding log
+*.log_accept_encoding
+*.logacceptencoding
+
+# File yang mungkin berisi informasi accept-language log
+*.log_accept_language
+*.logacceptlanguage
+
+# File yang mungkin berisi informasi connection log
+*.log_connection
+*.logconnection
+
+# File yang mungkin berisi informasi host log
+*.log_host
+*.loghost
+
+# File yang mungkin berisi informasi referer log
+*.log_referer
+*.logreferer
+
+# File yang mungkin berisi informasi if-modified-since log
+*.log_if_modified_since
+*.logifmodifiedsince
+
+# File yang mungkin berisi informasi if-none-match log
+*.log_if_none_match
+*.logifnonematch
+
+# File yang mungkin berisi informasi if-range log
+*.log_if_range
+*.logifrange
+
+# File yang mungkin berisi informasi if-unmodified-since log
+*.log_if_unmodified_since
+*.logifunmodifiedsince
+
+# File yang mungkin berisi informasi max-forwards log
+*.log_max_forwards
+*.logmaxforwards
+
+# File yang mungkin berisi informasi proxy-authorization log
+*.log_proxy_authorization
+*.logproxyauthorization
+
+# File yang mungkin berisi informasi range log
+*.log_range
+*.logrange
+
+# File yang mungkin berisi informasi referer log
+*.log_referer
+*.logreferer
+
+# File yang mungkin berisi informasi teady-after log
+*.log_teady_after
+*.logteadyafter
+
+# File yang mungkin berisi informasi user-agent log
+*.log_user_agent
+*.loguseragent
+
+# File yang mungkin berisi informasi vary log
+*.log_vary
+*.logvary
+
+# File yang mungkin berisi informasi via log
+*.log_via
+*.logvia
+
+# File yang mungkin berisi informasi warning log
+*.log_warning
+*.logwarning
+
+# File yang mungkin berisi informasi www-authenticate log
+*.log_www_authenticate
+*.logwwwauthenticate
+
+# File yang mungkin berisi informasi x-forwarded-for log
+*.log_x_forwarded_for
+*.logxforwardedfor
+
+# File yang mungkin berisi informasi x-forwarded-host log
+*.log_x_forwarded_host
+*.logxforwardedhost
+
+# File yang mungkin berisi informasi x-forward från log
+*.log_x_forwarded_for
+*.logxforwardedfor
+
+# File yang mungkin berisi informasi x-forwarded-proto log
+*.log_x_forwarded_proto
+*.logxforwardedproto
+
+# File yang mungkin berisi informasi x-forwarded-port log
+*.log_x_forwarded_port
+*.logxforwardedport
+
+# File yang mungkin berisi informasi x-forwarded-server log
+*.log_x_forwarded_server
+*.logxforwardedserver
+
+# File yang mungkin berisi informasi x-forwarded-sigv4 log
+*.log_x_forwarded_sigv4
+*.logxforwardedsigv4
+
+# File yang mungkin berisi informasi x-forwarded-trail_log
+*.log_x_forwarded_trail
+*.logxforwardedtrail
+
+# File yang mungkin berisi informasi x-forwarded-url_log
+*.log_x_forwarded_url
+*.logxforwardedurl
+
+# File yang mungkin berisi informasi x-forwarded-user-agent_log
+*.log_x_forwardpara user-agent
+*.logxforwarded_user-agent
+
+# File yang mungkin berisi informasi x-forwarded-host_log
+*.log_x_forwarded_host
+*.logxforwarded_host
+
+# File yang mungkin berisi informasi x-forwarded-port_log
+*.log_x_forwarded_port
+*.logxforwarded_port
+
+# File yang mungkin berisi informasi x-forwarded-protocol_log
+*.log_x_forwarded_protocol
+*.logxforwarded_protocol
+
+# File yang mungkin berisi informasi x-forwarded-trail_log
+*.log_x_forwarded_trail
+*.logxforwarded_trail
+
+# File yang mungkin berisi informasi x-forwarded-url_log
+*.log_x_forwarded_url
+*.logxforwarded_url
+
+# File yang mungkin berisi informasi x-forwarded-user-agent_log
+*.log_x_forwarded_user_agent
+*.logxforwarded_user_agent
+
+# File yang mungkin berisi informasi x-forwarded-host_log
+*.log_x_forwarded_host
+*.logxforwarded_host
+
+# File yang mungkin berisi informasi x-forwarded-port_log
+*.log_x_forwarded_port
+*.logxforwarded_port
+
+# File yang mungkin berisi informasi x-forwarded-protocol_log
+*.log_x_forwarded_protocol
+*.logxforwarded_protocol
+
+# File yang mungkin berisi informasi x-forwarded-trail_log
+*.log_x_forwarded_trail
+*.logxforwarded_trail
+
+# File yang mungkin berisi informasi x-forwarded-url_log
+*.log_x_forwarded_url
+*.logxforwarded_url
+
+# File yang mungkin berisi informasi x-forwarded-user-agent_log
+*.log_x_forwarded_user_agent
+*.logxforwarded_user_agent
+
+# File yang mungkin berisi informasi x-forwarded-host_log
+*.log_x_forwarded_host
+*.logxforwarded_host
+
+# File yang mungkin berisi informasi x-forwarded-port_log
+*.log_x_forwarded_port
+*.logxforwarded_port
+

@@ -1,0 +1,108 @@
+<div class="editor-section">
+  <div class="studio-card">
+    <div class="card-header-row">
+      <div class="card-header-left">
+        <h2>Atur Jadwal Postingan</h2>
+        <p>Unggah media tunggal atau carousel, buat deskripsi otomatis, lalu atur jam tayang.</p>
+      </div>
+      <span id="mediaCounterBadge" class="model-tag">0 File Dipilih</span>
+    </div>
+
+    <div class="form-group">
+      <div class="form-label-row">
+        <span class="form-label">File Media (Foto / Video / Carousel)</span>
+        <span class="form-hint">Maksimal 10 berkas media</span>
+      </div>
+      <div class="dropzone" id="dropzonePicker">
+        <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        <div class="dropzone-title">Klik atau Tarik File ke Sini</div>
+        <div class="dropzone-sub">Format yang didukung: JPG, PNG, dan Video MP4</div>
+      </div>
+      <div class="media-preview-container" id="mediaPreviewContainer"></div>
+    </div>
+
+    <!-- TAUTKAN PRODUK SHOWCASE TIKTOK -->
+    <div id="wrapperScheduleTiktokProduct" class="form-group" style="margin-bottom: 14px;">
+      <div class="form-label-row">
+        <label for="scheduleTiktokPid" class="form-label" style="font-size: 12px; color: #fff;">Tautkan Produk Showcase (Keranjang Kuning)</label>
+        <span class="form-hint" style="font-size: 11px;">Product ID (PID) Showcase</span>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <input type="text" id="scheduleTiktokPid" class="input-box" placeholder="Pilih produk atau ketik PID..." style="flex: 1; height: 38px; font-size: 12px;">
+        <button type="button" id="btnPickProductForSchedule" class="btn-execute" style="width: auto; padding: 0 16px; height: 38px; font-size: 12px; font-weight: 700; white-space: nowrap; background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);">
+          🛍️ Ambil dari Showcase
+        </button>
+      </div>
+      <div id="scheduleSelectedProductPreview" style="display: none; margin-top: 8px; font-size: 12px; color: #10b981; font-weight: 600;"></div>
+    </div>
+
+    <div class="form-group">
+      <div class="form-label-row">
+        <label for="captionInput" class="form-label">Keterangan / Caption</label>
+        <span class="char-counter" id="captionCounter">0 / 2.200</span>
+      </div>
+
+      <div class="ai-caption-bar" style="display: flex; gap: 8px; margin-bottom: 10px;">
+        <input type="text" id="aiPromptInput" placeholder="Ketik topik promo..." class="input-box" style="flex: 2;">
+        <select id="aiToneSelect" class="input-box" style="flex: 1;">
+          <option value="promo">🔥 Promo / Jualan</option>
+          <option value="casual">😎 Santai & Kekinian</option>
+          <option value="formal">💼 Rapi & Formal</option>
+        </select>
+        <button type="button" id="btnGenerateAI" class="btn-execute" style="width: auto; padding: 0 16px; white-space: nowrap;">
+          <span>✨ Buat Caption</span>
+        </button>
+      </div>
+
+      <textarea id="captionInput" rows="5" class="input-box" placeholder="Tulis cerita, deskripsi produk, tagar (#), atau mention (@)..."></textarea>
+    </div>
+
+    <div class="form-group">
+      <div class="form-label-row">
+        <label for="scheduleTimeInput" class="form-label">Waktu Publikasi Otomatis</label>
+        <span class="form-hint">Gunakan pilihan cepat atau setel manual</span>
+      </div>
+      <input type="datetime-local" id="scheduleTimeInput" class="input-box">
+      <div class="quick-time-row">
+        <button type="button" class="time-pill btn-preset" data-minutes="5">+5 Mnt</button>
+        <button type="button" class="time-pill btn-preset" data-minutes="15">+15 Mnt</button>
+        <button type="button" class="time-pill btn-preset" data-minutes="30">+30 Mnt</button>
+        <button type="button" class="time-pill btn-preset" data-minutes="60">+1 Jam</button>
+        <button type="button" class="time-pill btn-preset" data-preset="tomorrow-morning">Besok 09:00</button>
+        <button type="button" class="time-pill btn-preset" data-preset="tomorrow-evening">Besok 19:00</button>
+      </div>
+    </div>
+
+    <button id="btnSchedule" class="btn-execute">
+      <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z"/></svg>
+      <span id="btnScheduleText">Jadwalkan Postingan Sekarang</span>
+    </button>
+
+    <div id="statusAlert" class="alert-card" style="margin-top: 14px;"></div>
+  </div>
+</div>
+
+<div class="table-section" style="margin-top: 24px;">
+  <div class="studio-card">
+    <div class="card-header-row" style="margin-bottom: 14px;">
+      <div class="card-header-left"><h2>Antrean & Riwayat Jadwal</h2></div>
+      <button id="btnRefreshSchedules" class="chip-btn">🔄 Refresh Data</button>
+    </div>
+    <div class="table-wrapper">
+      <table class="custom-table">
+        <thead>
+          <tr>
+            <th style="width: 70px;">Media</th>
+            <th>Caption</th>
+            <th style="width: 170px;">Jadwal Tayang</th>
+            <th style="width: 120px; text-align: center;">Status</th>
+            <th style="width: 70px; text-align: center;">Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="scheduleTableBody">
+          <tr><td colspan="5" class="empty-table">Belum ada jadwal postingan dibuat.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

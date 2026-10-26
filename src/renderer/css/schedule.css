@@ -1,0 +1,392 @@
+/* =============================================================
+   LAYOUT VIEW JADWAL (VERTIKAL: FORM ATAS, TABEL BAWAH)
+   ============================================================= */
+
+/* Hanya berlaku saat tab jadwal berstatus active-view */
+#viewSchedule.active-view,
+.schedule-view-layout.active-view {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 20px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Saat tidak aktif, pastikan disembunyikan sepenuhnya */
+#viewSchedule:not(.active-view),
+.schedule-view-layout:not(.active-view) {
+  display: none !important;
+}
+
+.editor-section,
+.table-section {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.editor-section .panel,
+.table-section {
+  background: var(--bg-card, #121212);
+  border: 1px solid var(--border-color, #262626);
+  border-radius: 12px;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.form-group {
+  margin-bottom: 18px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.label-row label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #a3a3a3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.char-counter {
+  font-size: 11px;
+  color: var(--text-muted, #737373);
+}
+
+/* DROPZONE & THUMBNAIL */
+.dropzone {
+  border: 2px dashed #333333;
+  border-radius: 10px;
+  padding: 24px 20px;
+  text-align: center;
+  cursor: pointer;
+  background-color: var(--bg-input, #161616);
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.dropzone:hover {
+  border-color: var(--primary-blue, #0095f6);
+  background-color: #1a1a1a;
+}
+
+.dropzone svg {
+  width: 32px;
+  height: 32px;
+  fill: #666666;
+  margin-bottom: 8px;
+}
+
+.dropzone-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 4px;
+}
+
+.dropzone-sub {
+  font-size: 11px;
+  color: var(--text-secondary, #8e8e8e);
+}
+
+.media-preview-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  width: 100%;
+}
+
+.media-preview-item {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #333;
+  background-color: #000;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-preview-item img,
+.media-preview-item video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block;
+}
+
+.preview-type-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  font-size: 8px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.75);
+  color: #ffffff;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.btn-remove-media {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.9);
+  color: #ffffff;
+  border: none;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+}
+
+.btn-remove-media:hover {
+  background: #dc2626;
+}
+
+/* TOOLBAR GENERATOR AI CAPTION */
+.ai-caption-bar {
+  display: grid;
+  grid-template-columns: 1fr 180px auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ai-input-field {
+  width: 100%;
+  background-color: var(--bg-input, #161616);
+  border: 1px solid var(--border-color, #262626);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #ffffff;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.ai-input-field:focus {
+  outline: none;
+  border-color: var(--primary-blue, #0095f6);
+}
+
+.ai-select-field {
+  width: 100%;
+  background-color: var(--bg-input, #161616);
+  border: 1px solid var(--border-color, #262626);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #ffffff;
+  font-size: 12px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.btn-ai-magic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-ai-magic svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+/* TEXTAREA CAPTION & INPUT WAKTU */
+#captionInput {
+  width: 100% !important;
+  background-color: var(--bg-input, #161616);
+  border: 1px solid var(--border-color, #262626);
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #ffffff;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+#captionInput:focus {
+  outline: none;
+  border-color: var(--primary-blue, #0095f6);
+}
+
+input[type="datetime-local"] {
+  width: 100%;
+  background-color: var(--bg-input, #161616);
+  border: 1px solid var(--border-color, #262626);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #ffffff;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.preset-time-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.btn-preset {
+  background-color: var(--bg-input, #1a1a1a);
+  border: 1px solid var(--border-color, #2a2a2a);
+  color: var(--text-secondary, #9ca3af);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-preset:hover {
+  background-color: #262626;
+  color: #ffffff;
+}
+
+/* =============================================================
+   TABEL ANTREAN & RIWAYAT JADWAL
+   ============================================================= */
+.table-wrapper {
+  background-color: var(--bg-card, #121212);
+  border: 1px solid var(--border-color, #262626);
+  border-radius: 10px;
+  overflow-x: auto;
+  overflow-y: auto;
+  margin-top: 14px;
+  max-height: 380px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.table-wrapper::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.table-wrapper::-webkit-scrollbar-thumb {
+  background: #2b2b2b;
+  border-radius: 4px;
+}
+
+.custom-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+  table-layout: fixed; /* Mencegah kolom melar */
+}
+
+.custom-table th {
+  padding: 12px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-secondary, #8e8e8e);
+  border-bottom: 1px solid var(--border-color, #262626);
+  background-color: #161616;
+}
+
+.custom-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #1c1c1c;
+  vertical-align: middle;
+}
+
+.custom-table tbody tr:hover {
+  background-color: #171717;
+}
+
+/* KUNCI DIMENSI MEDIA THUMBNAIL TABEL */
+.table-thumb-box {
+  width: 52px !important;
+  height: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  min-height: 52px !important;
+  max-height: 52px !important;
+  border-radius: 6px;
+  overflow: hidden !important;
+  background-color: #000;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #2b2b2b;
+  box-sizing: border-box;
+}
+
+/* Kunci semua elemen img/video di dalam kotak thumbnail tabel */
+.table-thumb-box img,
+.table-thumb-box video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: cover !important;
+  display: block;
+}
+
+.table-badge-count {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  z-index: 2;
+}
+
+/* Sel Teks Caption (Maksimal 2 baris) */
+.table-caption-cell {
+  max-height: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2; /* Menambahkan properti standar agar peringatan hilang */
+  -webkit-box-orient: vertical;
+  line-height: 1.4;
+  color: #d1d5db;
+  font-size: 12px;
+  word-break: break-word;
+}

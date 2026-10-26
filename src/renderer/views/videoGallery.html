@@ -1,0 +1,30 @@
+<div class="studio-card">
+  <div class="card-header-row" style="margin-bottom: 20px;">
+    <div class="card-header-left">
+      <h2>Galeri Storyboard & Video AI</h2>
+      <span id="videoStorageCountBadge" class="form-hint">(0 Berkas)</span>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button type="button" id="btnOpenStoryboardFolder" class="chip-btn">📁 Folder Storyboard</button>
+      <button type="button" id="btnOpenVideoFolder" class="chip-btn">📁 Folder Video</button>
+    </div>
+  </div>
+
+  <div style="margin-bottom: 28px;">
+    <span class="form-label" style="display: block; margin-bottom: 12px;">Frame Storyboard Terakhir</span>
+    <div id="storyboardFramesGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; min-height: 90px; background: var(--bg-app); padding: 14px; border-radius: var(--radius-md); border: 1px dashed var(--border-subtle);">
+      <div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); font-size: 13px; padding: 25px 0;">
+        Belum ada frame storyboard yang ditarik.
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <span class="form-label" style="display: block; margin-bottom: 12px;">Daftar Video Jadi</span>
+    <div id="savedVideosGrid" class="storage-images-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px;">
+      <div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); font-size: 13px; padding: 30px 0;">
+        Belum ada berkas video yang dibuat.
+      </div>
+    </div>
+  </div>
+</div>

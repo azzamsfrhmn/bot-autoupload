@@ -1,0 +1,245 @@
+/* CONTAINER UTAMA SIDEBAR: TERKUNCI PADA GRID BARIS 2 KOLOM 1 */
+aside.sidebar {
+  grid-column: 1 / 2 !important;
+  grid-row: 2 / 3 !important;
+  width: 250px !important;
+  min-width: 250px !important;
+  max-width: 250px !important;
+  height: 100% !important;
+  max-height: calc(100vh - 32px) !important;
+  background-color: #0d111a !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  padding: 12px 12px 14px 12px !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  flex-shrink: 0 !important;
+}
+
+/* BAGIAN ATAS: LOGO & NAVIGASI */
+.sidebar-top {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  overflow: hidden !important;
+}
+
+.brand-header {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 2px 6px 12px 6px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+/* BRAND ICON: Fleksibel terhadap platform aktif (Instagram / TikTok) */
+.brand-icon {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  background: var(--accent-gradient, linear-gradient(135deg, #6366f1 0%, #4338ca 100%));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #ffffff;
+  transition: all 0.25s ease;
+  flex-shrink: 0 !important;
+}
+
+.brand-icon svg {
+  width: 18px !important;
+  height: 18px !important;
+  display: block !important;
+  fill: currentColor !important;
+}
+
+/* Gaya default jika platform TikTok aktif */
+.brand-icon.tiktok {
+  background: #000000 !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.08);
+}
+
+.brand-title {
+  font-size: 14.5px !important;
+  font-weight: 700 !important;
+  color: #fff !important;
+  letter-spacing: -0.2px !important;
+}
+
+/* LIST MENU NAVIGASI */
+.nav-menu {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+  margin-top: 10px !important;
+  width: 100% !important;
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.nav-menu::-webkit-scrollbar {
+  width: 4px;
+}
+
+.nav-menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.nav-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 8px 10px !important;
+  border-radius: 8px !important;
+  color: #94a3b8 !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  text-decoration: none !important;
+  transition: all 0.15s ease !important;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: #fff !important;
+}
+
+.nav-item.active {
+  background: rgba(99, 102, 241, 0.15) !important;
+  color: #818cf8 !important;
+  font-weight: 600 !important;
+}
+
+.nav-item svg {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  fill: currentColor !important;
+}
+
+/* BAGIAN BAWAH: STATUS AI & PROFIL USER TERKUNCI DI BAWAH */
+.sidebar-footer {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  padding-top: 10px !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+  width: 100% !important;
+  flex-shrink: 0 !important;
+}
+
+.sidebar-ai-indicator {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 6px 10px !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 8px !important;
+  font-size: 11px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+
+.sidebar-ai-indicator:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.ai-status-left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+.profile-badge {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 7px 10px !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 10px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+}
+
+/* AVATAR */
+.avatar, #avatarContainer {
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  background: #1e293b !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+
+#avatarImg {
+  width: 30px !important;
+  height: 30px !important;
+  max-width: 30px !important;
+  max-height: 30px !important;
+  object-fit: cover !important;
+  border-radius: 50% !important;
+  display: block !important;
+}
+
+.profile-badge-info {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 !important;
+  overflow: hidden !important;
+  min-width: 0 !important;
+}
+
+.profile-username {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.profile-status {
+  font-size: 10.5px !important;
+  color: #10b981 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+
+.status-dot {
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 50% !important;
+  background: #10b981 !important;
+  flex-shrink: 0 !important;
+}
+
+.btn-logout {
+  background: transparent !important;
+  border: none !important;
+  color: #64748b !important;
+  cursor: pointer !important;
+  padding: 4px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.2s ease !important;
+}
+
+.btn-logout:hover {
+  color: #ef4444 !important;
+}

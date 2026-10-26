@@ -1,0 +1,105 @@
+<div class="studio-card">
+  <div class="card-header-row">
+    <div class="card-header-left">
+      <h2>Konfigurasi Layanan AI & Akun</h2>
+      <p>Kelola koneksi API Gemini, sesi ChatGPT, Pinterest, TikTok Shop Streamer, dan rotasi multi-akun Google Flow.</p>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 24px;">
+    <!-- Gemini Card -->
+    <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
+      <span class="form-label" style="font-size: 11px;">Gemini (Caption AI)</span>
+      <div id="aiConnectionStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #f59e0b; margin-top: 8px;">
+        <span class="status-dot" style="background: #f59e0b;"></span><span>Memeriksa...</span>
+      </div>
+      <div id="aiStatusDetail" class="form-hint" style="margin-top: 6px;">Menghubungkan ke server...</div>
+    </div>
+
+    <!-- ChatGPT Gambar Card -->
+    <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span class="form-label" style="font-size: 11px;">ChatGPT Gambar</span>
+        <div style="display: flex; gap: 4px;">
+          <button type="button" id="btnRefreshChatGpt" class="chip-btn" style="padding: 2px 8px; font-size: 11px;">W1</button>
+          <button type="button" id="btnLoginChatGptW2" class="chip-btn" style="padding: 2px 8px; font-size: 11px; background: #2563eb; color: #fff;">Login W2</button>
+        </div>
+      </div>
+      <div id="chatgptStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: var(--success); margin-top: 8px;">
+        <span class="status-dot"></span><span id="chatgptStatusText">Aktif</span>
+      </div>
+      <div id="chatgptAccountEmail" class="form-hint" style="margin-top: 6px;">Sesi DALL·E 3 (Multi-Worker)</div>
+    </div>
+
+    <!-- ChatGPT Video Card -->
+    <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span class="form-label" style="font-size: 11px;">CHATGPT VIDEO</span>
+        <div style="display: flex; gap: 4px;">
+          <button type="button" id="btnLoginChatGptVideo" class="chip-btn" style="padding: 2px 8px; font-size: 11px;">W1</button>
+          <button type="button" id="btnLoginChatGptVideoW2" class="chip-btn" style="padding: 2px 8px; font-size: 11px; background: #2563eb; color: #fff;">Login W2</button>
+        </div>
+      </div>
+      <div id="chatgptVideoStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #a78bfa; margin-top: 8px;">
+        <span class="status-dot" style="background: #7c3aed;"></span><span>ChatGPT Video</span>
+      </div>
+      <div class="form-hint" style="margin-top: 6px;">Custom GPT Project (Worker 1 & Worker 2)</div>
+    </div>
+
+    <!-- Pinterest Card -->
+    <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span class="form-label" style="font-size: 11px;">Pinterest</span>
+        <button type="button" id="btnLoginPinterest" class="chip-btn" style="padding: 2px 8px; font-size: 11px;">Login</button>
+      </div>
+      <div id="pinterestStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #f59e0b; margin-top: 8px;">
+        <span class="status-dot" style="background: #f59e0b;" id="pinterestStatusDot"></span>
+        <span id="pinterestStatusText">Belum Login</span>
+      </div>
+      <div id="pinterestAccountDetail" class="form-hint" style="margin-top: 6px;">Sesi Karakter</div>
+    </div>
+
+    <!-- TikTok Streamer Card -->
+    <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span class="form-label" style="font-size: 11px;">TikTok Shop Streamer</span>
+        <button type="button" id="btnLoginTikTokStreamer" class="chip-btn" style="padding: 2px 8px; font-size: 11px; background: #2563eb; color: #fff;">Buka / Cek</button>
+      </div>
+      <div id="ttStreamerStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #f59e0b; margin-top: 8px;">
+        <span class="status-dot" style="background: #f59e0b;" id="ttStreamerStatusDot"></span>
+        <span id="ttStreamerStatusText">Belum Login</span>
+      </div>
+      <div id="ttStreamerAccountDetail" class="form-hint" style="margin-top: 6px;">Portal Streamer & Etalase</div>
+    </div>
+  </div>
+
+  <!-- Multi-Akun Google Flow -->
+  <div class="studio-card" style="padding: 20px; background: var(--bg-app); margin-bottom: 24px;">
+    <div class="card-header-row" style="margin-bottom: 14px;">
+      <div class="card-header-left">
+        <h2>Multi-Akun Google Flow (Rotasi Kredit)</h2>
+        <p>Sistem otomatis beralih ke akun cadangan saat batas render tercapai.</p>
+      </div>
+      <button type="button" id="btnAddFlowAccount" class="chip-btn">+ Tambah Akun</button>
+    </div>
+    <div id="flowAccountsList" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px;"></div>
+  </div>
+
+  <!-- API Key Setting -->
+  <div class="form-group">
+    <div class="form-label-row">
+      <label for="settingsApiKeyInput" class="form-label">Google Gemini API Key</label>
+      <a href="https://aistudio.google.com/api-keys" target="_blank" style="font-size: 11.5px; color: var(--accent-primary); text-decoration: none;">Dapatkan API Key Gratis ↗</a>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <input type="password" id="settingsApiKeyInput" class="input-box" placeholder="Masukkan Gemini API Key...">
+      <button type="button" id="btnToggleShowKey" class="chip-btn" style="padding: 0 16px;">👁 Lihat</button>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 12px; margin-top: 24px;">
+    <button type="button" id="btnTestAiConnection" class="chip-btn" style="padding: 12px 20px;">⚡ Tes Koneksi Gemini</button>
+    <button type="button" id="btnSaveAiSettings" class="btn-execute" style="flex: 1;">💾 Simpan Konfigurasi</button>
+  </div>
+  <div id="settingsAlert" class="alert-card" style="margin-top: 16px;"></div>
+</div>

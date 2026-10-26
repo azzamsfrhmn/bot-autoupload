@@ -1,0 +1,300 @@
+/* =============================================================
+   VIEW 3: HALAMAN PROFIL INSTAGRAM LENGKAP
+   ============================================================= */
+
+.profile-container {
+  max-width: 935px;
+  margin: 0 auto;
+  padding: 36px 20px 40px 20px; /* Ruang napas atas agar tidak mepet */
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Header Profil Atas (Avatar + Detail Info) */
+.ig-profile-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 75px;
+  margin-bottom: 36px;
+  padding-bottom: 10px;
+}
+
+/* Kolom Foto Profil Kiri */
+.ig-profile-avatar-col {
+  width: 160px;
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+  padding-top: 14px; /* Ruang aman agar gelembung note tidak terpotong */
+}
+
+.avatar-large-wrapper {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  min-width: 140px;
+  min-height: 140px;
+  border-radius: 50%;
+  padding: 3px;
+  background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.avatar-large-wrapper img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  background-color: #262626;
+  border: 3px solid #000000;
+  display: block;
+}
+
+/* Fallback inisial jika foto profil gagal memuat */
+.avatar-large-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: #262626;
+  border: 3px solid #000000;
+  color: #ffffff;
+  font-size: 46px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+}
+
+.note-bubble {
+  position: absolute;
+  top: -14px;
+  left: 10px;
+  background: #262626;
+  border: 1px solid #363636;
+  color: #a8a8a8;
+  font-size: 11px;
+  padding: 3px 12px;
+  border-radius: 14px;
+  white-space: nowrap;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+  z-index: 5;
+}
+
+/* Kolom Info Kanan */
+.ig-profile-info-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.username-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.profile-title-username {
+  font-size: 20px;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.btn-ig-pill {
+  background-color: #262626;
+  border: 1px solid transparent;
+  color: #ffffff;
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.btn-ig-pill:hover {
+  background-color: #363636;
+}
+
+/* Statistik: Post, Followers, Following */
+.profile-stats-row {
+  display: flex;
+  gap: 32px;
+  list-style: none;
+  margin-bottom: 18px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.profile-stats-row strong {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+/* Bio Detail */
+.profile-bio-details {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.bio-category {
+  color: var(--text-muted, #737373);
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bio-text {
+  color: #ffffff;
+  margin-bottom: 8px;
+  white-space: pre-line;
+}
+
+.bio-link {
+  color: #3897f0;
+  text-decoration: none;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity 0.15s ease;
+}
+
+.bio-link:hover {
+  opacity: 0.85;
+}
+
+.bio-link svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+/* Bar Highlights Bulat */
+.highlights-section {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-color, #262626);
+}
+
+.highlight-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.highlight-circle {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 1px solid #333333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #121212;
+}
+
+.highlight-circle svg {
+  width: 24px;
+  height: 24px;
+  fill: #666666;
+}
+
+.highlight-label {
+  font-size: 11px;
+  color: var(--text-secondary, #8e8e8e);
+}
+
+/* Tab Header Feed */
+.profile-tabs-nav {
+  display: flex;
+  justify-content: center;
+  gap: 48px;
+  border-top: 1px solid var(--border-color, #262626);
+  margin-bottom: 20px;
+}
+
+.profile-tab {
+  background: transparent;
+  border: none;
+  border-top: 1px solid transparent;
+  color: var(--text-muted, #737373);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  margin-top: -1px;
+}
+
+.profile-tab svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.profile-tab.active {
+  color: #ffffff;
+  border-top: 1px solid #ffffff;
+}
+
+/* Galeri Grid Postingan 3 Kolom Persegi 1:1 Presisi */
+.posts-grid-ig {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  width: 100%;
+}
+
+.grid-post-item,
+.post-card-ig {
+  position: relative;
+  aspect-ratio: 1 / 1 !important;
+  width: 100%;
+  background-color: #121212;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.grid-post-item img,
+.post-card-ig img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block;
+}
+
+.post-overlay,
+.post-overlay-stats {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.grid-post-item:hover .post-overlay,
+.post-card-ig:hover .post-overlay-stats {
+  opacity: 1;
+}
