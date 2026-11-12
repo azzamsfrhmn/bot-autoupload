@@ -1,6 +1,37 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // true saat dijalankan lewat `npm start` (electron .), false di versi terinstal → fitur uji coba hanya tampil di dev
+  // (preload ber-sandbox tidak selalu punya process.defaultApp → cek juga nama exe: electron.exe = dev)
+  isDevMode: Boolean(process.defaultApp) || /[\\/]electron(\.exe)?$/i.test(process.execPath || ''),
+  // 3D Edukasi: ide topik otomatis dari AI
+  suggestEdu3DTopic: () => ipcRenderer.invoke('edu3d-suggest-topic'),
+  // 3D Kartun: API key milik pelanggan (Claude opsional, ElevenLabs wajib)
+  getKartunKeys: () => ipcRenderer.invoke('kartun3d-get-keys'),
+  saveKartunKeys: (patch) => ipcRenderer.invoke('kartun3d-save-keys', patch),
+  testKartunKeys: () => ipcRenderer.invoke('kartun3d-test-keys'),
+  getKartunPrompt: (kind) => ipcRenderer.invoke('kartun3d-get-prompt', kind),
+  testKartunVoice: (voice) => ipcRenderer.invoke('kartun3d-test-voice', voice),
+  validateKartunJson: (text) => ipcRenderer.invoke('kartun3d-validate-json', text),
+  // 3D Edukasi: karakter ciri khas (disimpan sekali, dipakai di semua video)
+  getEdu3DCharacter: () => ipcRenderer.invoke('edu3d-get-character'),
+  selectEdu3DCharacter: () => ipcRenderer.invoke('edu3d-select-character'),
+  clearEdu3DCharacter: () => ipcRenderer.invoke('edu3d-clear-character'),
+  // Sistem Lisensi & Validasi Perangkat (HWID)
+  getMachineId: () => ipcRenderer.invoke('license:get-machine-id'),
+  activateLicense: (licenseKey) => ipcRenderer.invoke('license:activate', licenseKey),
+  getSavedLicense: () => ipcRenderer.invoke('license:get-saved'),
+  getPerfProfile: () => ipcRenderer.invoke('perf:get'),
+  getRemoteUploadConfig: () => ipcRenderer.invoke('remote-upload:get-config'),
+  setRemoteUploadConfig: (patch) => ipcRenderer.invoke('remote-upload:set-config', patch),
+  syncRemoteSchedules: () => ipcRenderer.invoke('remote-upload:sync'),
+  setPerfMode: (mode) => ipcRenderer.invoke('perf:set-mode', mode),
+  clearSavedLicense: () => ipcRenderer.invoke('license:clear-saved'),
+  verifyAndSaveLicense: (licenseKey) => ipcRenderer.invoke('license:activate', licenseKey), // Alias kompatibilitas
+  redirectMain: () => ipcRenderer.invoke('license:redirect-main'),
+  licenseSuccessRedirect: () => ipcRenderer.invoke('license:redirect-main'), // Alias kompatibilitas
+  getCurrentPlan: () => ipcRenderer.invoke('license:get-current-plan'),
+
   // Fallback Invoke & Send IPC Umum
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   send: (channel, ...args) => ipcRenderer.send(channel, ...args),
@@ -9,9 +40,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Kontrol Jendela Kustom (Custom Title Bar)
-  minimizeWindow: () => ipcRenderer.send('window-minimize'),
-  maximizeWindow: () => ipcRenderer.send('window-maximize'),
-  closeWindow: () => ipcRenderer.send('window-close'),
+  minimizeWindow: () => {
+    ipcRenderer.send('window-minimize');
+    ipcRenderer.send('window:minimize');
+  },
+  maximizeWindow: () => {
+    ipcRenderer.send('window-maximize');
+    ipcRenderer.send('window:maximize');
+  },
+  closeWindow: () => {
+    ipcRenderer.send('window-close');
+    ipcRenderer.send('window:close');
+  },
+
+  // Fitur Pembaruan Sistem Otomatis (Game Style Popup)
+  checkForUpdates: () => ipcRenderer.invoke('updater:check-for-updates'),
+  startUpdateDownload: () => ipcRenderer.invoke('updater:start-download'),
+  installUpdateNow: () => ipcRenderer.invoke('updater:quit-and-install'),
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.removeAllListeners('updater:available');
+    ipcRenderer.on('updater:available', (_event, data) => callback(data));
+  },
+  onUpdateNotAvailable: (callback) => {
+    ipcRenderer.removeAllListeners('updater:not-available');
+    ipcRenderer.on('updater:not-available', () => callback());
+  },
+  onUpdateProgress: (callback) => {
+    ipcRenderer.removeAllListeners('updater:download-progress');
+    ipcRenderer.on('updater:download-progress', (_event, data) => callback(data));
+  },
+  onUpdateDownloaded: (callback) => {
+    ipcRenderer.removeAllListeners('updater:downloaded');
+    ipcRenderer.on('updater:downloaded', (_event, data) => callback(data));
+  },
+  onUpdateError: (callback) => {
+    ipcRenderer.removeAllListeners('updater:error');
+    ipcRenderer.on('updater:error', (_event, message) => callback(message));
+  },
 
   // Multi-Akun & Platform (Instagram & TikTok)
   getAllAccounts: () => ipcRenderer.invoke('get-all-accounts'),
@@ -20,6 +85,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addNewAccount: () => ipcRenderer.send('add-new-account'),
   addNewTiktokAccount: () => ipcRenderer.send('add-new-tiktok-account'),
   loginTikTokAccount: (accountUsername) => ipcRenderer.invoke('login-tiktok-account', accountUsername),
+  loginInstagramAccount: (fbId) => ipcRenderer.invoke('login-instagram-account', fbId),
+  loginFacebookAccount: () => ipcRenderer.invoke('login-facebook-account'),
+  loginShopeeAccount: () => ipcRenderer.invoke('login-shopee-account'),
+  shopeeAdbStatus: () => ipcRenderer.invoke('shopee-adb-status'),
+  shopeeAdbInstallTapper: () => ipcRenderer.invoke('shopee-adb-install-tapper'),
+  shopeeAdbPair: (hostPort, code) => ipcRenderer.invoke('shopee-adb-pair', hostPort, code),
+  shopeeAdbConnect: (hostPort) => ipcRenderer.invoke('shopee-adb-connect', hostPort),
+  getFacebookAccounts: () => ipcRenderer.invoke('get-facebook-accounts'),
+  deleteFacebookAccount: (id) => ipcRenderer.invoke('delete-facebook-account', id),
+  syncFacebookPages: (fbId) => ipcRenderer.invoke('sync-facebook-pages', fbId),
+  importInstagramSession: (text) => ipcRenderer.invoke('import-instagram-session', text),
+  onInstagramLoginStatus: (callback) => {
+    ipcRenderer.removeAllListeners('instagram-login-status');
+    ipcRenderer.on('instagram-login-status', (_event, value) => callback(value));
+  },
   syncTikTokProfile: (accountId) => ipcRenderer.invoke('tiktok:sync-profile', accountId),
   navigateToDashboard: () => ipcRenderer.send('navigate-to-dashboard'),
   navigateToSelectAccount: () => ipcRenderer.send('navigate-to-select-account'),
@@ -34,7 +114,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   triggerLogin: () => ipcRenderer.send('trigger-login'),
   getSessionInfo: () => ipcRenderer.invoke('get-session-info'),
   getUserFeed: () => ipcRenderer.invoke('get-user-feed'),
-  refreshProfile: () => ipcRenderer.invoke('refresh-profile'),
+  refreshProfile: (opts) => ipcRenderer.invoke('refresh-profile', opts),
   logout: () => ipcRenderer.invoke('logout'),
 
   // Showcase Produk TikTok Affiliate (Kalodata & TikTok Shop Streamer)
@@ -63,6 +143,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFiles: () => ipcRenderer.invoke('select-files'),
   schedulePost: (data) => ipcRenderer.invoke('schedule-post', data),
   getSchedules: () => ipcRenderer.invoke('get-schedules'),
+  getProductVideoCounts: () => ipcRenderer.invoke('get-product-video-counts'),
+  getVideoPostStatus: () => ipcRenderer.invoke('get-video-post-status'),
   deleteSchedule: (id) => ipcRenderer.invoke('delete-schedule', id),
   onSchedulesUpdated: (callback) => {
     ipcRenderer.removeAllListeners('schedules-updated');
@@ -96,6 +178,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Generator & Penampungan Video Reels AI (Storyboard Pipeline)
   generateAiVideo: (params) => ipcRenderer.invoke('generate-ai-video', params),
+  // Batalkan semua proses pembuatan video yang sedang berjalan (semua konsep, termasuk render Remotion)
+  cancelAiVideo: () => ipcRenderer.invoke('cancel-ai-video'),
+  // Konsep Remotion
+  remotionGenerateScript: (payload) => ipcRenderer.invoke('remotion-generate-script', payload),
+  remotionSelectMedia: (kind) => ipcRenderer.invoke('remotion-select-media', kind),
+  remotionRender: (payload) => ipcRenderer.invoke('remotion-render', payload),
   getSavedVideos: () => ipcRenderer.invoke('get-saved-videos'),
   getGeneratedVideos: () => ipcRenderer.invoke('get-generated-videos'),
   openVideoFolder: () => ipcRenderer.invoke('open-video-folder'),
@@ -129,6 +217,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFlowLogin: (accountId) => ipcRenderer.invoke('open-flow-login', accountId),
   openFlowW2Login: (accountId) => ipcRenderer.invoke('open-flow-w2-login', accountId),
   syncFlowAccountCredits: (accountId) => ipcRenderer.invoke('sync-flow-account-credits', accountId),
+  autoSyncFlowCredits: () => ipcRenderer.invoke('auto-sync-flow-credits'),
   runFlowProject: (params) => ipcRenderer.invoke('run-flow-project', params),
   runTikTokFlowDirect: (params) => ipcRenderer.invoke('run-tiktok-flow-direct', params),
   onFlowAccountsUpdated: (callback) => {

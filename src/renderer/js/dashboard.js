@@ -9,11 +9,26 @@ import { initImageStorageManager } from './modules/imageStorageManager.js';
 import { initProfileManager, loadFullProfile, updateSidebarProfile } from './modules/profileManager.js';
 import { initAiSettingsManager } from './modules/aiSettingsManager.js';
 import { initAccountManager } from './modules/accountManager.js';
+import { initAccountSwitcher } from './modules/accountSwitcher.js';
 import { initShowcaseManager } from './modules/showcaseManager.js';
-import { initVideoGenManager } from '../../core/videoGenManager.js';
+import { initLoadingIndicator } from './modules/loadingIndicator.js';
+import { initVideoGenManager, startVideoTimer, stopVideoTimer } from '../../core/videoGenManager.js';
+import { initRemotionManager } from './modules/remotionManager.js';
+import { initKartun3DForm, getKartun3DState, removeKartunQueueItem } from './modules/kartun3dForm.js';
 
 // State Konsep Reels Aktif (Default: 'jj')
 let currentReelsConcept = 'jj';
+
+// Refresh otomatis setelah video selesai: konsep & setelan Flow yang dipertahankan
+const REELS_REOPEN_KEY = 'reelsReopenAfterRefresh';
+// Jeda antar video dalam mode loop (detik)
+const LOOP_PAUSE_SEC = 20;
+
+const REELS_KEPT_SELECTS = [
+  'tiktokVideoAspectRatio', 'tiktokFlowModelSelect', 'tiktokFlowResolutionSelect', 'tiktokFlowDurationSelect', 'tiktokFlowOutputCountSelect',
+  'videoAspectRatio', 'flowModelSelect', 'flowResolutionSelect', 'flowDurationSelect', 'videoBatchCount', 'sensasiPoseSelect', 'povVoiceSelect',
+  'reelsLoopCount', 'edu3dSceneCount', 'kartun3dDuration'
+];
 
 // Helper URL Aman untuk Gambar Lokal
 function toSafeFileUrl(filePath) {
@@ -26,7 +41,7 @@ function toSafeFileUrl(filePath) {
   return `file:///${clean}`;
 }
 
-// Template SVG Logo Platform[cite: 24]
+// Template SVG Logo Platform
 const PLATFORM_BRAND_ICONS = {
   tiktok: `
     <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -40,10 +55,10 @@ const PLATFORM_BRAND_ICONS = {
   `
 };
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function initDashboardApp() {
   console.log('[Dashboard] Memulai inisialisasi modul...');
 
-  // 0. Kontrol Jendela Kustom (Custom Title Bar Frameless)[cite: 24]
+  // 0. Kontrol Jendela Kustom (Custom Title Bar Frameless)
   const btnWinMinimize = document.getElementById('btnWinMinimize');
   const btnWinMaximize = document.getElementById('btnWinMaximize');
   const btnWinClose = document.getElementById('btnWinClose');
@@ -60,14 +75,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.electronAPI?.closeWindow();
   });
 
-  // 1. Tab Navigation[cite: 24]
+  // 1. Tab Navigation
   try {
     initTabNavigation();
   } catch (err) {
     console.error('[Dashboard Error] Gagal memuat tab navigation:', err);
   }
 
-  // 2. Modul Profil & Feed[cite: 24]
+  // 2. Modul Profil & Feed
   try {
     initProfileManager();
     await updateSidebarProfile();
@@ -76,11 +91,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('[Dashboard Error] Gagal memuat profileManager:', err);
   }
 
-  // 3. Modul Kelola Multi-Akun & Auto-Sync[cite: 24]
+  // 3. Modul Kelola Multi-Akun & Auto-Sync
   try {
     initAccountManager();
+    initAccountSwitcher();
 
-    // Trigger auto-sync profil TikTok di background saat dashboard dimuat[cite: 24]
     window.electronAPI?.getAllAccounts?.().then((accData) => {
       const activeId = accData?.activeAccountId || accData?.accounts?.[0]?.id;
       const activeAcc = accData?.accounts?.find((a) => a.id === activeId) || accData?.accounts?.[0];
@@ -100,7 +115,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('[Dashboard Error] Gagal memuat accountManager:', err);
   }
 
-  // 3.1 Event Listener: Otomatis sinkronisasi setiap kali tab "Profil & Postingan" diklik
   const tabProfileButtons = document.querySelectorAll('#tabProfile, [data-tab="profile"], [data-view="viewProfile"]');
   tabProfileButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -108,28 +122,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // 4. Modul Showcase Produk TikTok Affiliate[cite: 24]
+  // 4. Modul Showcase Produk TikTok Affiliate
   try {
     initShowcaseManager();
   } catch (err) {
     console.error('[Dashboard Error] Gagal memuat showcaseManager:', err);
   }
 
-  // 5. Modul Jadwal Postingan[cite: 24]
+  // 5. Modul Jadwal Postingan
   try {
     initScheduleManager();
   } catch (err) {
     console.error('[Dashboard Error] Gagal memuat scheduleManager:', err);
   }
 
-  // 6. Modul Auto Pilot[cite: 24]
+  // Spinner otomatis untuk gambar yang sedang dimuat
+  try {
+    initLoadingIndicator();
+  } catch (err) {
+    console.error('[Dashboard Error] Gagal memuat loadingIndicator:', err);
+  }
+
+  // 6. Modul Auto Pilot
   try {
     initAutoPilotManager();
   } catch (err) {
     console.error('[Dashboard Error] Gagal memuat autoPilotManager:', err);
   }
 
-  // 7. Modul Gambar AI & Penampungan Galeri[cite: 24]
+  // 7. Modul Gambar AI & Penampungan Galeri
   try {
     initImageGenManager();
     initImageStorageManager();
@@ -137,26 +158,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('[Dashboard Error] Gagal memuat imageManager:', err);
   }
 
-  // 8. Modul Pengaturan AI[cite: 24]
+  // 8. Modul Pengaturan AI
   try {
     initAiSettingsManager();
   } catch (err) {
     console.error('[Dashboard Error] Gagal memuat aiSettingsManager:', err);
   }
 
-  // 8.1 Inisialisasi Modul Video Reels Generator[cite: 24]
+  // 8.1 Modul Video Reels Generator
   try {
     initVideoGenManager();
   } catch (err) {
     console.error('[Dashboard Error] Gagal memuat videoGenManager:', err);
   }
 
-  // 9. Tombol Tambah Akun TikTok via CDP[cite: 24]
+  // 8.1b Konsep 3D Kartun: sumber naskah, Tempel JSON & pratinjau adegan
+  try { initKartun3DForm(); } catch (e) { console.error('[Dashboard Error] Gagal memuat form 3D Kartun:', e); }
+
+  // 8.2 Konsep Remotion (form di halaman Video Reels)
+  try {
+    initRemotionManager();
+  } catch (err) {
+    console.error('[Dashboard Error] Gagal memuat remotionManager:', err);
+  }
+
+  // 9. Tombol Tambah Akun TikTok via CDP
   const btnLoginTikTokCDP = document.getElementById('btnLoginTikTokCDP');
   btnLoginTikTokCDP?.addEventListener('click', async (e) => {
     e.preventDefault();
     try {
-      const res = await window.electronAPI?.loginTikTokAccount?.('karuna_id');
+      const res = await window.electronAPI?.loginTikTokAccount?.(null);
       if (res?.success) {
         alert(res.message || 'Browser Chrome resmi telah dibuka untuk login TikTok.');
       } else {
@@ -167,9 +198,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // =========================================================================
-  // 9.1 INISIALISASI NAVIGASI KARTU KONSEP VIDEO REELS (JJ vs DASTER)[cite: 24]
-  // =========================================================================
+  // Navigasi Konsep Video Reels
   const selectionView = document.getElementById('reelsConceptSelectionView');
   const formView = document.getElementById('reelsGeneratorFormView');
   const btnBackToConcepts = document.getElementById('btnBackToConcepts');
@@ -192,15 +221,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // Durasi hanya bisa diatur di Omni 1.1 Flash; model Veo di Google Flow selalu 8 detik
+  const tiktokModelSelect = document.getElementById('tiktokFlowModelSelect');
+  const tiktokDurationSelect = document.getElementById('tiktokFlowDurationSelect');
+
+  function updateDurationVisibility() {
+    const group = tiktokDurationSelect?.closest('.form-group');
+    if (!group) return;
+    const isOmni = /omni/i.test(tiktokModelSelect?.value || '');
+    group.style.display = isOmni ? '' : 'none';
+    if (group.parentElement) group.parentElement.style.gridTemplateColumns = `repeat(${isOmni ? 5 : 4}, 1fr)`;
+    if (!isOmni) tiktokDurationSelect.value = '8 Detik';
+  }
+
+  tiktokModelSelect?.addEventListener('change', updateDurationVisibility);
+  updateDurationVisibility();
+
   conceptCards.forEach((card) => {
     card.addEventListener('mouseenter', () => {
       card.style.transform = 'translateY(-3px)';
-      card.style.borderColor = card.getAttribute('data-concept') === 'daster' ? 'rgba(52, 211, 153, 0.5)' : 'rgba(167, 139, 250, 0.5)';
+      card.style.borderColor = card.getAttribute('data-concept') === 'daster' ? 'rgba(52, 211, 153, 0.5)' : 'rgba(232, 162, 92, 0.5)';
       card.style.boxShadow = '0 8px 24px -4px rgba(0,0,0,0.45)';
     });
     card.addEventListener('mouseleave', () => {
       card.style.transform = 'translateY(0)';
-      card.style.borderColor = card.getAttribute('data-concept') === 'daster' ? 'rgba(148, 163, 184, 0.18)' : 'rgba(139, 92, 246, 0.25)';
+      card.style.borderColor = card.getAttribute('data-concept') === 'daster' ? 'rgba(160, 159, 154, 0.18)' : 'rgba(232, 162, 92, 0.25)';
       card.style.boxShadow = 'none';
     });
 
@@ -214,27 +259,76 @@ document.addEventListener('DOMContentLoaded', async () => {
           conceptIndicatorBadge.style.background = 'rgba(16, 185, 129, 0.15)';
           conceptIndicatorBadge.style.borderColor = 'rgba(16, 185, 129, 0.35)';
         }
-        if (pipelineHeaderLabel) pipelineHeaderLabel.textContent = '⚡ Pipeline Daster:';
+        if (pipelineHeaderLabel) pipelineHeaderLabel.textContent = 'Pipeline Daster:';
         if (pipelineSteps) {
           pipelineSteps.innerHTML = `
             <span>1. Motif Daster</span><span>→</span><span>2. Master Ref Indoor</span><span>→</span>
-            <span style="color: #34d399;">3. 3 Foto Kasual Rumah</span><span>→</span><span style="color: #38bdf8; font-weight: 600;">4. Motion Video Halus</span>
+            <span style="color: #34d399;">3. 3 Foto Kasual Rumah</span><span>→</span><span style="color: #6fcdbd; font-weight: 600;">4. Motion Video Halus</span>
           `;
         }
         if (lblReferencePhoto) lblReferencePhoto.textContent = 'Foto Suasana / Ruangan Rumah (Pinterest / Lokal)';
         if (hintReferencePhoto) hintReferencePhoto.textContent = 'Acuan ruangan kamar/teras/ruang santai keluarga';
+      } else if (currentReelsConcept === 'pov') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: POV Tangan';
+          conceptIndicatorBadge.style.color = '#6fcdbd';
+          conceptIndicatorBadge.style.background = 'rgba(53, 178, 159, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(53, 178, 159, 0.35)';
+        }
+      } else if (currentReelsConcept === 'carakerja3d') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: 3D Cara Kerja';
+          conceptIndicatorBadge.style.color = '#6fcdbd';
+          conceptIndicatorBadge.style.background = 'rgba(53, 178, 159, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(53, 178, 159, 0.35)';
+        }
+      } else if (currentReelsConcept === 'kartun3d') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: 3D Kartun';
+          conceptIndicatorBadge.style.color = '#f0bb85';
+          conceptIndicatorBadge.style.background = 'rgba(232, 162, 92, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(232, 162, 92, 0.35)';
+        }
+      } else if (currentReelsConcept === 'edu3d') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: 3D Edukasi';
+          conceptIndicatorBadge.style.color = '#6fcdbd';
+          conceptIndicatorBadge.style.background = 'rgba(53, 178, 159, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(53, 178, 159, 0.35)';
+        }
+      } else if (currentReelsConcept === 'remotion') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: Remotion';
+          conceptIndicatorBadge.style.color = '#f0bb85';
+          conceptIndicatorBadge.style.background = 'rgba(232, 162, 92, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(232, 162, 92, 0.35)';
+        }
+      } else if (currentReelsConcept === 'sensasi') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: Sensasi';
+          conceptIndicatorBadge.style.color = '#f0bb85';
+          conceptIndicatorBadge.style.background = 'rgba(232, 162, 92, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(232, 162, 92, 0.35)';
+        }
+        if (pipelineHeaderLabel) pipelineHeaderLabel.textContent = 'Pipeline Sensasi:';
+        if (pipelineSteps) {
+          pipelineSteps.innerHTML = `
+            <span>1. Foto Model + Produk</span><span>→</span><span>2. Pilih Pose</span><span>→</span>
+            <span style="color: #6fcdbd;">3. Gambar Pose + Prompt VO</span><span>→</span><span style="color: #f0bb85; font-weight: 600;">4. Render Google Flow</span>
+          `;
+        }
       } else {
         if (conceptIndicatorBadge) {
           conceptIndicatorBadge.textContent = 'Konsep: TikTok Affiliate JJ (Jedag-Jedug)';
-          conceptIndicatorBadge.style.color = '#c084fc';
-          conceptIndicatorBadge.style.background = 'rgba(124, 58, 237, 0.15)';
-          conceptIndicatorBadge.style.borderColor = 'rgba(124, 58, 237, 0.35)';
+          conceptIndicatorBadge.style.color = '#f0bb85';
+          conceptIndicatorBadge.style.background = 'rgba(232, 162, 92, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(232, 162, 92, 0.35)';
         }
-        if (pipelineHeaderLabel) pipelineHeaderLabel.textContent = '⚡ Pipeline TikTok:';
+        if (pipelineHeaderLabel) pipelineHeaderLabel.textContent = 'Pipeline TikTok:';
         if (pipelineSteps) {
           pipelineSteps.innerHTML = `
             <span>1. Baju Bersih</span><span>→</span><span>2. Master Ref (9:16)</span><span>→</span>
-            <span style="color: #38bdf8;">3. 3 Foto Candid (1K)</span><span>→</span><span style="color: #c084fc; font-weight: 600;">4. Video Motion Flow</span>
+            <span style="color: #6fcdbd;">3. 3 Foto Candid (1K)</span><span>→</span><span style="color: #f0bb85; font-weight: 600;">4. Video Motion Flow</span>
           `;
         }
         if (lblReferencePhoto) lblReferencePhoto.textContent = 'Upload Foto Referensi (Pinterest / Lokal)';
@@ -253,9 +347,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (selectionView) selectionView.style.display = 'block';
   });
 
-  // =========================================================================
-  // 9.2 MODAL PEMILIH ASET JJ CAPCUT (1 VIDEO + 3 FOTO)[cite: 24]
-  // =========================================================================
+  // Setelah refresh otomatis (video selesai): buka lagi tab Buat Video Reels dengan konsep & setelan yang sama
+  let reelsReopen = null;
+  try {
+    reelsReopen = JSON.parse(sessionStorage.getItem(REELS_REOPEN_KEY) || 'null');
+    sessionStorage.removeItem(REELS_REOPEN_KEY);
+  } catch (e) {}
+  if (reelsReopen) {
+    setTimeout(() => {
+      document.getElementById('tabAiVideo')?.click();
+      Object.entries(reelsReopen.selects || {}).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el && value && Array.from(el.options).some((o) => o.value === value)) {
+          el.value = value;
+          el.dispatchEvent(new Event('change'));
+        }
+      });
+      if (reelsReopen.concept) {
+        document.querySelector(`.reels-concept-card[data-concept="${reelsReopen.concept}"]`)?.click();
+      }
+    }, 300);
+  }
+
+  // Modal JJ CapCut
   const modalSelectJJAssets = document.getElementById('modalSelectJJAssets');
   const btnCloseJJModal = document.getElementById('btnCloseJJModal');
   const btnCancelJJModal = document.getElementById('btnCancelJJModal');
@@ -297,15 +411,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateJJModalUI();
 
     if (modalSelectJJAssets) modalSelectJJAssets.style.display = 'flex';
-    if (jjVideoGrid) jjVideoGrid.innerHTML = '<div style="color: #94a3b8; font-size: 11px; padding: 10px;">Memuat berkas video...</div>';
-    if (jjPhotoGrid) jjPhotoGrid.innerHTML = '<div style="color: #94a3b8; font-size: 11px; padding: 10px;">Memuat berkas foto...</div>';
+    if (jjVideoGrid) jjVideoGrid.innerHTML = '<div class="app-loader">Memuat berkas video...</div>';
+    if (jjPhotoGrid) jjPhotoGrid.innerHTML = '<div class="app-loader">Memuat berkas foto...</div>';
 
     try {
-      // 1. Ambil Video Tersimpan dari Galeri[cite: 24]
       const videos = (await window.electronAPI?.getSavedVideos?.()) || [];
       if (jjVideoGrid) {
         if (videos.length === 0) {
-          jjVideoGrid.innerHTML = '<div style="grid-column: 1 / -1; color: #94a3b8; font-size: 11px; padding: 10px;">Belum ada video tersimpan. Render video melalui form terlebih dahulu.</div>';
+          jjVideoGrid.innerHTML = '<div style="grid-column: 1 / -1; color: #9d9c97; font-size: 11px; padding: 10px;">Belum ada video tersimpan. Render video melalui form terlebih dahulu.</div>';
         } else {
           jjVideoGrid.innerHTML = '';
           videos.slice(0, 16).forEach((vid) => {
@@ -320,7 +433,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             card.onclick = () => {
               selectedJJVideo = vid.filePath;
               jjVideoGrid.querySelectorAll('div').forEach((d) => d.style.borderColor = 'rgba(255,255,255,0.1)');
-              card.style.borderColor = '#06b6d4';
+              card.style.borderColor = '#35b29f';
               updateJJModalUI();
             };
             jjVideoGrid.appendChild(card);
@@ -328,7 +441,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      // 2. Ambil Foto Candid Tersimpan dari Galeri[cite: 24]
       let images = [];
       if (typeof window.electronAPI?.getSavedAiImages === 'function') {
         images = await window.electronAPI.getSavedAiImages();
@@ -340,7 +452,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (jjPhotoGrid) {
         if (!images || images.length === 0) {
-          jjPhotoGrid.innerHTML = '<div style="grid-column: 1 / -1; color: #94a3b8; font-size: 11px; padding: 10px;">Belum ada foto candid tersimpan.</div>';
+          jjPhotoGrid.innerHTML = '<div style="grid-column: 1 / -1; color: #9d9c97; font-size: 11px; padding: 10px;">Belum ada foto candid tersimpan.</div>';
         } else {
           jjPhotoGrid.innerHTML = '';
           images.slice(0, 24).forEach((img) => {
@@ -359,7 +471,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else {
                 if (selectedJJPhotos.length < 3) {
                   selectedJJPhotos.push(rawPath);
-                  card.style.borderColor = '#c084fc';
+                  card.style.borderColor = '#f0bb85';
                 }
               }
               updateJJModalUI();
@@ -384,7 +496,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.target === modalSelectJJAssets) modalSelectJJAssets.style.display = 'none';
   });
 
-  // Handler Kirim Aset ke CapCut Web via Playwright[cite: 24]
   btnProcessJJCapcut?.addEventListener('click', async () => {
     if (!selectedJJVideo || selectedJJPhotos.length !== 3) return;
 
@@ -393,12 +504,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const progressBox = document.getElementById('videoProgressBox');
     const statusTitle = document.getElementById('videoStatusTitle');
     const progressBar = document.getElementById('videoProgressBar');
-    const percentSpan = document.getElementById('videoPercent');
     const logsBox = document.getElementById('videoLogs');
 
     if (progressBox) progressBox.style.display = 'block';
     if (statusTitle) statusTitle.textContent = 'Menghubungkan ke CapCut Web...';
-    if (percentSpan) percentSpan.textContent = '10%';
+    startVideoTimer();
     if (progressBar) progressBar.style.width = '10%';
     if (logsBox) {
       logsBox.innerHTML = `<div>[${new Date().toLocaleTimeString()}] Memulai otomasi CapCut Web (1 Video + 3 Foto)...</div>`;
@@ -411,9 +521,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         candidPaths: selectedJJPhotos
       });
 
+      stopVideoTimer(Boolean(res?.success));
       if (res?.success) {
         if (statusTitle) statusTitle.textContent = 'Video JJ Selesai!';
-        if (percentSpan) percentSpan.textContent = '100%';
         if (progressBar) progressBar.style.width = '100%';
         alert(`Sukses! Video JJ berhasil diekspor dari CapCut:\n${res.videoPath || res.fileName}`);
         window.dispatchEvent(new CustomEvent('refresh-video-storage'));
@@ -421,11 +531,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         alert('Gagal membuat video JJ di CapCut: ' + (res?.error || 'Terjadi kesalahan pada otomasi CapCut.'));
       }
     } catch (err) {
+      stopVideoTimer(false);
       alert('Error CapCut: ' + err.message);
     }
   });
 
-  // 10. Sinkronisasi Logo Brand Sidebar & Tampilan Form Platform (Instagram vs TikTok)[cite: 24]
+  // --- Shopee: kontrol status HP (ADB + Tap Server) ---
+  async function refreshShopeeHpStatus() {
+    const el = document.getElementById('shopeeHpStatusText');
+    const btnSetup = document.getElementById('btnShopeeHpSetup');
+    if (!el) return;
+    el.textContent = 'Mengecek HP...';
+    try {
+      const s = await window.electronAPI.shopeeAdbStatus();
+      if (!s || !s.connected) {
+        el.innerHTML = '🔴 HP tidak terhubung. Colok USB (USB debugging ON) atau pair WiFi.';
+        if (btnSetup) btnSetup.textContent = 'Siapkan HP';
+        return;
+      }
+      const model = s.model || 'HP';
+      if (!s.shopee) { el.innerHTML = `🟠 ${model}: app Shopee belum terpasang.`; return; }
+      if (!s.tapper) { el.innerHTML = `🟠 ${model}: Tap Server belum terpasang. Klik "Siapkan HP".`; if (btnSetup) btnSetup.textContent = 'Kirim APK'; return; }
+      if (!s.enabled) { el.innerHTML = `🟠 ${model}: Tap Server belum aktif. Aktifkan di Setelan > Aksesibilitas > Tap Server.`; return; }
+      el.innerHTML = `🟢 ${model} siap (${s.screen ? s.screen.width + 'x' + s.screen.height : ''}). Shopee login + Tap Server aktif.`;
+    } catch (e) {
+      el.textContent = 'Gagal cek HP: ' + e.message;
+    }
+  }
+  let _shopeeHpWired = false;
+  function setupShopeeHpControls() {
+    if (_shopeeHpWired) return;
+    _shopeeHpWired = true;
+    document.getElementById('btnShopeeHpRefresh')?.addEventListener('click', () => refreshShopeeHpStatus());
+    document.getElementById('btnShopeeHpSetup')?.addEventListener('click', async () => {
+      const el = document.getElementById('shopeeHpStatusText');
+      try {
+        const r = await window.electronAPI.shopeeAdbInstallTapper();
+        if (r && r.success) { if (el) el.textContent = r.message; }
+        else alert(r?.error || 'Gagal menyiapkan HP.');
+      } catch (e) { alert('Gagal: ' + e.message); }
+    });
+  }
+
+  // Sinkronisasi Antarmuka Platform
   async function syncPlatformUI() {
     const brandIconEl = document.getElementById('mainBrandIcon') || document.querySelector('.brand-icon');
     const tabShowcase = document.getElementById('tabShowcase');
@@ -445,10 +593,49 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const currentPlatform = String(activeAcc?.platform || sessionInfo?.platform || '').toLowerCase();
       const isTikTok = currentPlatform === 'tiktok';
+      const isFacebook = currentPlatform === 'facebook';
+      const isShopee = currentPlatform === 'shopee';
 
-      // 10.1 Perbarui Logo di sebelah tulisan AutoUpload[cite: 24]
+      // Tombol "Bagikan juga ke Facebook" di Buat Jadwal hanya untuk akun Instagram
+      const shareRow = document.getElementById('rowShareToFacebook');
+      const shareToggle = document.getElementById('toggleShareToFacebook');
+      if (shareRow) shareRow.style.display = (!isTikTok && !isFacebook && !isShopee) ? 'flex' : 'none';
+      if (shareToggle && !shareToggle.dataset.bound) {
+        shareToggle.dataset.bound = '1';
+        try { shareToggle.checked = localStorage.getItem('igShareToFacebook') !== '0'; } catch (e) { shareToggle.checked = true; }
+        shareToggle.addEventListener('change', () => {
+          try { localStorage.setItem('igShareToFacebook', shareToggle.checked ? '1' : '0'); } catch (e) {}
+        });
+      }
+
+      // Kartu TikTok Shop Streamer (Pengaturan AI) hanya untuk akun TikTok
+      const streamerCard = document.getElementById('cardTikTokStreamer');
+      if (streamerCard) streamerCard.style.display = isTikTok ? '' : 'none';
+
+      // Petunjuk jadwal sesuai platform
+      const hintEl = document.getElementById('schedulePlatformHint');
+      if (hintEl) {
+        hintEl.innerHTML = isTikTok
+          ? 'Video di-upload lebih awal & dijadwalkan langsung di TikTok. Biarkan aplikasi terbuka sampai status <b>Terjadwal di TikTok</b>, setelah itu PC boleh dimatikan.'
+          : isShopee
+            ? 'Akun Shopee aktif: posting otomatis Shopee Video sedang dikembangkan.'
+          : isFacebook
+            ? 'Reels di-upload lebih awal & dijadwalkan langsung di Facebook Page (Meta Business Suite). Biarkan aplikasi terbuka sampai status <b>Terjadwal di Facebook</b>, setelah itu PC boleh dimatikan. Hanya video (Reels).'
+            : 'Postingan di-upload lebih awal & dijadwalkan langsung di Instagram (Schedule content, maks ±25 hari). Biarkan aplikasi terbuka sampai status <b>Terjadwal di Instagram</b>, setelah itu PC boleh dimatikan.';
+      }
+
       if (brandIconEl) {
-        if (isTikTok) {
+        if (isShopee) {
+          brandIconEl.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2a4.5 4.5 0 0 0-4.47 4H4.2a1 1 0 0 0-1 1.07l.9 13.1A2 2 0 0 0 6.1 22h11.8a2 2 0 0 0 2-1.83l.9-13.1a1 1 0 0 0-1-1.07h-3.33A4.5 4.5 0 0 0 12 2zm0 1.8A2.7 2.7 0 0 1 14.65 6h-5.3A2.7 2.7 0 0 1 12 3.8zm.15 5.2c1.6 0 2.6.7 2.9 1.05l-.8 1.1c-.4-.33-1.15-.75-2.1-.75-.9 0-1.4.4-1.4.9 0 .6.7.85 1.75 1.2 1.5.5 2.85 1.1 2.85 2.8 0 1.6-1.35 2.8-3.4 2.8-1.6 0-2.85-.7-3.4-1.3l.85-1.15c.6.55 1.5 1.05 2.55 1.05 1.05 0 1.65-.5 1.65-1.15 0-.75-.75-1-1.85-1.4-1.4-.45-2.7-1.05-2.7-2.6 0-1.45 1.3-2.55 3.1-2.55z"/></svg>';
+          brandIconEl.style.background = '#ee4d2d';
+          brandIconEl.style.border = '1px solid rgba(255, 255, 255, 0.15)';
+          brandIconEl.style.color = '#ffffff';
+        } else if (isFacebook) {
+          brandIconEl.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M24 12a12 12 0 1 0-13.9 11.9v-8.4h-3V12h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-2 .9-2 1.9V12h3.4l-.5 3.5h-2.9v8.4A12 12 0 0 0 24 12z"/></svg>';
+          brandIconEl.style.background = '#1877f2';
+          brandIconEl.style.border = '1px solid rgba(255, 255, 255, 0.15)';
+          brandIconEl.style.color = '#ffffff';
+        } else if (isTikTok) {
           brandIconEl.innerHTML = PLATFORM_BRAND_ICONS.tiktok;
           brandIconEl.style.background = '#000000';
           brandIconEl.style.border = '1px solid rgba(255, 255, 255, 0.15)';
@@ -461,8 +648,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      // 10.2 Beralih Formulir Buat Video Reels Sesuai Platform Aktif[cite: 24]
-      if (isTikTok) {
+      if (true) { // Semua platform (TikTok / Instagram / Facebook): Buat Video Reels selalu mulai dari Pilih Konsep
         if (flowBadgeInstagram) flowBadgeInstagram.style.display = 'none';
         if (flowBadgeTikTok) flowBadgeTikTok.style.display = 'flex';
         if (containerInstagramForm) containerInstagramForm.style.display = 'none';
@@ -482,7 +668,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (formView) formView.style.display = 'block';
       }
 
-      // 10.3 Kontrol tampilan tab navigasi Showcase[cite: 24]
       if (tabShowcase) {
         if (isTikTok) {
           tabShowcase.style.setProperty('display', 'flex', 'important');
@@ -497,13 +682,36 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      // 10.4 Selaraskan teks tombol jadwal postingan[cite: 24]
+      // Auto Pilot hanya untuk Instagram
+      const tabAutoPilot = document.getElementById('tabAutoPilot');
+      if (tabAutoPilot) {
+        if (isTikTok || isFacebook || isShopee) {
+          tabAutoPilot.style.setProperty('display', 'none', 'important');
+          if (document.getElementById('viewAutoPilot')?.classList.contains('active-view')) {
+            document.getElementById('tabSchedule')?.click();
+          }
+        } else {
+          tabAutoPilot.style.removeProperty('display');
+        }
+      }
+
+      // Shopee: input link produk + status HP; sembunyikan produk TikTok
+      const wrapShopee = document.getElementById('wrapperScheduleShopee');
+      if (wrapShopee) wrapShopee.style.display = isShopee ? 'block' : 'none';
+      if (isShopee) {
+        const wrapTtProduct = document.getElementById('wrapperScheduleTiktokProduct');
+        if (wrapTtProduct) wrapTtProduct.style.display = 'none';
+        setupShopeeHpControls();
+        refreshShopeeHpStatus();
+      }
+
       if (btnSchedule) {
         const spanText = btnSchedule.querySelector('span');
         if (spanText) {
-          spanText.textContent = isTikTok 
-            ? 'Jadwalkan Postingan ke TikTok' 
-            : 'Jadwalkan Postingan ke Instagram';
+          spanText.textContent = isTikTok
+            ? 'Jadwalkan Postingan ke TikTok'
+            : isShopee ? 'Jadwalkan Video ke Shopee'
+            : isFacebook ? 'Jadwalkan Reels ke Facebook Page' : 'Jadwalkan Postingan ke Instagram';
         }
       }
     } catch (err) {
@@ -523,7 +731,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.electronAPI.onProfileUpdated(() => syncPlatformUI());
   }
 
-  // 11. Modal Pemilih Galeri Gambar AI (Khusus Instagram)[cite: 24]
+  // Modal Galeri Instagram
   const imagePickerModal = document.getElementById('imagePickerModal');
   const imagePickerGrid = document.getElementById('imagePickerGrid');
   const btnCloseImagePickerModal = document.getElementById('btnCloseImagePickerModal');
@@ -531,7 +739,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function openGalleryPickerModal() {
     if (!imagePickerModal || !imagePickerGrid) return;
-    imagePickerGrid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 40px 0; font-size: 12.5px;">Memuat berkas galeri...</div>';
+    imagePickerGrid.innerHTML = '<div class="app-loader">Memuat berkas galeri...</div>';
     imagePickerModal.style.display = 'flex';
 
     try {
@@ -570,7 +778,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const safeSrc = toSafeFileUrl(rawPath);
         const card = document.createElement('div');
-        card.style.cssText = 'position: relative; width: 100%; height: 240px; border-radius: 10px; overflow: hidden; background: #181920; border: 2px solid rgba(255, 255, 255, 0.08); cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: transform 0.15s ease, border-color 0.15s ease;';
+        card.style.cssText = 'position: relative; width: 100%; height: 240px; border-radius: 10px; overflow: hidden; background: #1b1d20; border: 2px solid rgba(255, 255, 255, 0.08); cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: transform 0.15s ease, border-color 0.15s ease;';
 
         const displayName = img.fileName || decodeURIComponent(rawPath.split(/[/\\]/).pop().split('?')[0]) || `Banner_${idx + 1}`;
 
@@ -582,7 +790,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
 
         card.onmouseenter = () => {
-          card.style.borderColor = '#7c3aed';
+          card.style.borderColor = '#e8a25c';
           card.style.transform = 'translateY(-2px)';
         };
         card.onmouseleave = () => {
@@ -617,7 +825,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // 11.1 Modal Pemilih Gambar Showcase TikTok (2 Tahap: Produk -> Galeri Foto Lengkap)[cite: 24]
+  // Modal Showcase TikTok
   const showcasePickerModal = document.getElementById('showcasePickerModal');
   const showcaseProductsGrid = document.getElementById('showcaseProductsGrid');
   const showcaseImagesGrid = document.getElementById('showcaseImagesGrid');
@@ -645,7 +853,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function openShowcasePickerModal() {
     if (!showcasePickerModal || !showcaseProductsGrid) return;
     resetShowcaseModalState();
-    showcaseProductsGrid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 50px 0; font-size: 12.5px;">Memuat produk etalase...</div>';
+    showcaseProductsGrid.innerHTML = '<div class="app-loader">Memuat produk etalase...</div>';
     showcasePickerModal.style.display = 'flex';
 
     try {
@@ -665,7 +873,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const pid = item.id || item.productId || '';
 
         const card = document.createElement('div');
-        card.style.cssText = 'position: relative; border-radius: 10px; overflow: hidden; background: #131722; border: 1px solid rgba(255, 255, 255, 0.1); cursor: pointer; padding: 10px; display: flex; flex-direction: column; gap: 8px; transition: all 0.2s ease;';
+        card.style.cssText = 'position: relative; border-radius: 10px; overflow: hidden; background: #17191c; border: 1px solid rgba(255, 255, 255, 0.1); cursor: pointer; padding: 10px; display: flex; flex-direction: column; gap: 8px; transition: all 0.2s ease;';
 
         card.innerHTML = `
           <div style="width: 100%; aspect-ratio: 1/1; border-radius: 6px; overflow: hidden; background: #000;">
@@ -674,11 +882,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           <div style="font-size: 12px; font-weight: 600; color: #fff; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${title}</div>
           <div style="display: flex; justify-content: space-between; font-size: 11px; color: #10b981; font-weight: 700;">
             <span>${price}</span>
-            <span style="color: #a78bfa;">Pilih Foto →</span>
+            <span style="color: #f0bb85;">Pilih Foto →</span>
           </div>
         `;
 
-        card.onmouseenter = () => { card.style.borderColor = '#2563eb'; card.style.transform = 'translateY(-2px)'; };
+        card.onmouseenter = () => { card.style.borderColor = '#35b29f'; card.style.transform = 'translateY(-2px)'; };
         card.onmouseleave = () => { card.style.borderColor = 'rgba(255, 255, 255, 0.1)'; card.style.transform = 'translateY(0)'; };
 
         card.onclick = () => {
@@ -702,7 +910,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     showcaseProductsGrid.style.display = 'none';
     showcaseImagesGrid.style.display = 'grid';
-    showcaseImagesGrid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 50px 0; font-size: 12.5px;">Memuat galeri foto lengkap produk...</div>';
+    showcaseImagesGrid.innerHTML = '<div class="app-loader">Memuat galeri foto lengkap produk...</div>';
 
     if (btnBackToShowcaseProducts) btnBackToShowcaseProducts.style.display = 'inline-flex';
     if (showcaseModalTitle) showcaseModalTitle.textContent = title;
@@ -729,11 +937,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     allPhotos.forEach((imgUrl, i) => {
       const card = document.createElement('div');
-      card.style.cssText = 'position: relative; aspect-ratio: 1/1; border-radius: 8px; overflow: hidden; background: #131722; border: 2px solid rgba(255, 255, 255, 0.1); cursor: pointer; transition: all 0.2s ease;';
+      card.style.cssText = 'position: relative; aspect-ratio: 1/1; border-radius: 8px; overflow: hidden; background: #17191c; border: 2px solid rgba(255, 255, 255, 0.1); cursor: pointer; transition: all 0.2s ease;';
 
       card.innerHTML = `
         <img src="${imgUrl}" referrerpolicy="no-referrer" style="width: 100%; height: 100%; object-fit: cover; display: block;">
-        <span style="position: absolute; bottom: 0; left: 0; right: 0; background: ${i === 0 ? '#009688' : 'rgba(0,0,0,0.75)'}; font-size: 10px; font-weight: 700; color: #fff; text-align: center; padding: 3px 0;">
+        <span style="position: absolute; bottom: 0; left: 0; right: 0; background: ${i === 0 ? '#35b29f' : 'rgba(0,0,0,0.75)'}; font-size: 10px; font-weight: 700; color: #fff; text-align: center; padding: 3px 0;">
           ${i === 0 ? 'Cover Utama' : `Foto ${i + 1}`}
         </span>
       `;
@@ -775,7 +983,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     resetShowcaseModalState();
   });
 
-  // Hubungkan Tombol Pilih Gambar di Instagram & TikTok[cite: 24]
   const btnOpenGallery = document.getElementById('btnOpenGalleryPickerModal');
   const inputCustomImage = document.getElementById('selectedCustomImagePath');
   btnOpenGallery?.addEventListener('click', openGalleryPickerModal);
@@ -789,7 +996,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   inputTiktokProduct?.addEventListener('click', openShowcasePickerModal);
   thumbWrapShowcase?.addEventListener('click', openShowcasePickerModal);
 
-  // Penutupan Modal Galeri & Showcase[cite: 24]
   btnCloseImagePickerModal?.addEventListener('click', () => {
     if (imagePickerModal) imagePickerModal.style.display = 'none';
   });
@@ -810,7 +1016,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.target === showcasePickerModal) showcasePickerModal.style.display = 'none';
   });
 
-  // 12. Handler Unggah Foto Karakter (Khusus TikTok)[cite: 24]
+  // Unggah Foto Karakter Model
   const btnUploadCharacter = document.getElementById('btnUploadCharacterPhoto');
   const inputCharacterPath = document.getElementById('selectedCharacterImagePath');
   const thumbWrapCharacter = document.getElementById('characterSelectedThumbWrap');
@@ -870,7 +1076,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     window._selectedCustomCharacterPath = null;
   });
 
-  // 12.1 Handler Foto Referensi (Paste dari Pinterest / Pilih File)[cite: 24]
+  // Foto Referensi (Pinterest / File Lokal)
   const btnPasteReference = document.getElementById('btnPasteReferencePhoto');
   const btnUploadReference = document.getElementById('btnUploadReferencePhoto');
   const inputReferencePath = document.getElementById('selectedReferenceImagePath');
@@ -957,18 +1163,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 13. Handler Tombol Folder Direktori Galeri Video[cite: 24]
-  const btnOpenStoryboardFolder = document.getElementById('btnOpenStoryboardFolder');
-  btnOpenStoryboardFolder?.addEventListener('click', () => {
-    window.electronAPI?.openStoryboardFolder?.();
-  });
+  // Tombol Folder Storyboard & Folder Video ditangani videoGenManager (jangan didaftarkan ulang di sini → folder terbuka 2x)
 
-  const btnOpenVideoFolder = document.getElementById('btnOpenVideoFolder');
-  btnOpenVideoFolder?.addEventListener('click', () => {
-    window.electronAPI?.openVideoFolder?.();
-  });
-
-  // 14. Event Modal Detail Storyboard[cite: 24]
+  // Modal Detail Storyboard
   const modalStoryboard = document.getElementById('storyboardDetailModal');
   const btnCloseStoryboard = document.getElementById('btnCloseStoryboardDetail');
   const btnOkStoryboard = document.getElementById('btnOkStoryboardDetail');
@@ -996,7 +1193,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 15. Event Modal Popup Pemutar Video Reels[cite: 24]
+  // Modal Video Reels
   const modalVideo = document.getElementById('videoModal');
   const btnCloseVideo = document.getElementById('btnCloseVideoModal');
   const btnOkVideo = document.getElementById('btnOkVideoModal');
@@ -1028,7 +1225,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 16. Fungsi Pemuat Galeri Video & Storyboard (Diperbaiki agar frame asal tidak acak saat frame dihapus)[cite: 24]
   const loadVideoGalleries = async () => {
     try {
       if (window.electronAPI?.getStoryboardHistory) {
@@ -1042,13 +1238,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (modalVideo && popupVideoPlayer) {
             popupVideoPlayer.src = videoSrc;
 
-            // Prioritaskan thumbnail / frame asal yang tersimpan langsung pada metadata video[cite: 24]
             let originThumbSrc = '';
             if (videoItem && (videoItem.thumbnailPath || videoItem.poster)) {
               originThumbSrc = toSafeFileUrl(videoItem.thumbnailPath || videoItem.poster);
             }
 
-            // Fallback: Cocokkan berdasarkan kesamaan nama berkas (bukan sekadar urutan indeks DOM)[cite: 24]
             if (!originThumbSrc) {
               const baseName = (videoItem?.fileName || selectedVideoPath.split(/[/\\]/).pop()).replace(/\.[^.]+$/, '');
               const renderedFrames = Array.from(document.querySelectorAll('#storyboardFramesGrid img'));
@@ -1058,7 +1252,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               }
             }
 
-            // Tampilkan frame asal jika valid; sembunyikan jika memang frame aslinya sudah terhapus[cite: 24]
             if (popupStoryboardImage && modalStoryboardPreviewWrapper) {
               if (originThumbSrc) {
                 popupStoryboardImage.removeAttribute('alt');
@@ -1087,7 +1280,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('refresh-video-storage', loadVideoGalleries);
   loadVideoGalleries();
 
-  // 16.1 Handler Tunggal Tombol Eksekusi Render Video[cite: 24]
+  // Render Pipeline Video
   let isGeneratingVideo = false;
   const rawBtnRunReels = document.getElementById('btnRunFullReelsPipeline');
   let btnRunFullReelsPipeline = rawBtnRunReels;
@@ -1096,6 +1289,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnRunFullReelsPipeline = rawBtnRunReels.cloneNode(true);
     rawBtnRunReels.parentNode.replaceChild(btnRunFullReelsPipeline, rawBtnRunReels);
   }
+
+  const WORKER_COUNT_KEY = 'tiktokWorkerCount';
+  const workerButtons = document.querySelectorAll('.tiktok-worker-btn');
+  const workerHint = document.getElementById('tiktokWorkerHint');
+  const workerModeLabel = document.getElementById('tiktokWorkerModeLabel');
+  function setWorkerCount(count) {
+    const n = Math.min(2, Math.max(1, Number(count) || 1));
+    const input = document.getElementById('tiktokWorkerCount');
+    if (input) input.value = String(n);
+    workerButtons.forEach((b) => b.classList.toggle('active', Number(b.dataset.workers) === n));
+    if (workerModeLabel) workerModeLabel.textContent = `${n} Worker`;
+    if (workerHint) workerHint.textContent = n === 1 ? '1 video per proses' : '2 video bersamaan · butuh 2 akun Flow berkredit';
+    try { localStorage.setItem(WORKER_COUNT_KEY, String(n)); } catch (e) {}
+  }
+  function getSelectedWorkerCount() {
+    return Math.min(2, Math.max(1, Number(document.getElementById('tiktokWorkerCount')?.value) || 1));
+  }
+  workerButtons.forEach((b) => b.addEventListener('click', () => setWorkerCount(b.dataset.workers)));
+  try { setWorkerCount(localStorage.getItem(WORKER_COUNT_KEY) || 1); } catch (e) { setWorkerCount(1); }
 
   btnRunFullReelsPipeline?.addEventListener('click', async (e) => {
     e.preventDefault();
@@ -1121,27 +1333,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     let characterPath = '';
     let referencePath = '';
 
-    if (isTikTok) {
-      bannerPath = window._selectedCustomBannerPath || document.getElementById('selectedTiktokProductPath')?.dataset?.fullPath || '';
-      characterPath = window._selectedCustomCharacterPath || document.getElementById('selectedCharacterImagePath')?.dataset?.fullPath || '';
-      referencePath = window._selectedCustomReferencePath || document.getElementById('selectedReferenceImagePath')?.dataset?.fullPath || '';
+    // 3D Edukasi tidak memakai foto produk / karakter (naskah & visual dibuat AI dari topik)
+    const isEdu3D = isTikTok && currentReelsConcept === 'edu3d';
+    // 3D Kartun juga tanpa foto: karakter Dodo & Bongo dan dunianya digambar mesin 3D lokal
+    // 3D Cara Kerja: mesin & pipeline yang sama dengan 3D Kartun (mode narator)
+    const isKartun3D = isTikTok && (currentReelsConcept === 'kartun3d' || currentReelsConcept === 'carakerja3d');
+    const kartunState = isKartun3D ? getKartun3DState(currentReelsConcept) : null;
+    // Antrian naskah: tiap item = 1 video, dibuat berurutan
+    const kartunQueue = kartunState?.source === 'queue' ? kartunState.queue : [];
+    if (isKartun3D && kartunState.source === 'queue' && !kartunQueue.length) {
+      alert('Antrian naskah masih kosong. Tempel JSON lalu klik "Tambah ke Antrian".');
+      return;
+    }
+    if (isKartun3D && kartunState.source === 'json' && !kartunState.spec) {
+      alert('Tempel JSON naskah yang valid terlebih dahulu.');
+      return;
+    }
+    if (isTikTok && !isEdu3D && !isKartun3D) {
+      const isJJ = currentReelsConcept === 'jj';
+      const suffix = { daster: 'Daster', sensasi: 'Sensasi', pov: 'Pov' }[currentReelsConcept] || 'JJ';
+
+      const productInput = document.getElementById(`selectedTiktokProductPath${suffix}`);
+
+      const characterInput = document.getElementById(`selectedCharacterImagePath${suffix}`);
+
+      const referenceInput = document.getElementById(
+        'selectedReferenceImagePathJJ'
+      );
+
+      bannerPath = productInput?.dataset?.fullPath || '';
+      characterPath = characterInput?.dataset?.fullPath || '';
+      // Foto referensi Pinterest hanya untuk konsep JJ
+      referencePath = isJJ ? (referenceInput?.dataset?.fullPath || '') : '';
 
       if (!bannerPath) {
         alert('Silakan pilih Foto Produk Showcase TikTok terlebih dahulu!');
         return;
       }
       if (!characterPath) {
-        alert('Silakan upload foto karakter model Karuna terlebih dahulu!');
+        alert(currentReelsConcept === 'pov' ? 'Silakan pilih foto background / latar terlebih dahulu!' : 'Silakan upload foto karakter model Karuna terlebih dahulu!');
         return;
       }
-      if (!referencePath) {
-        const alertMsg = currentReelsConcept === 'daster'
-          ? 'Silakan salin foto referensi ruangan/rumah lalu klik Paste Gambar!'
-          : 'Silakan salin foto pose referensi dari Pinterest lalu klik Paste Gambar!';
-        alert(alertMsg);
+      if (isJJ && !referencePath) {
+        alert('Silakan salin foto pose referensi dari Pinterest lalu klik Paste Gambar!');
         return;
       }
-    } else {
+    } else if (!isTikTok) {
       bannerPath = window._selectedCustomBannerPath || document.getElementById('selectedCustomImagePath')?.dataset?.fullPath || '';
       const bannerSource = document.getElementById('videoBannerSource')?.value || 'select_image';
 
@@ -1178,56 +1415,169 @@ document.addEventListener('DOMContentLoaded', async () => {
         ? (document.getElementById('tiktokFlowResolutionSelect')?.value || '720p')
         : (document.getElementById('flowResolutionSelect')?.value || '720p'),
       duration: parsedDuration,
+      // Nama parameter yang dibaca pipeline Flow (Daster/JJ)
+      flowRatio: isTikTok
+        ? (document.getElementById('tiktokVideoAspectRatio')?.value || '9:16')
+        : (document.getElementById('videoAspectRatio')?.value || '9:16'),
+      flowModel: isTikTok
+        ? (document.getElementById('tiktokFlowModelSelect')?.value || 'Veo 3.1 - Lite')
+        : (document.getElementById('flowModelSelect')?.value || 'Omni 1.1 Flash'),
+      flowResolution: isTikTok
+        ? (document.getElementById('tiktokFlowResolutionSelect')?.value || '720p')
+        : (document.getElementById('flowResolutionSelect')?.value || '720p'),
+      flowDuration: parsedDuration,
+      flowOutputCount: isTikTok ? (document.getElementById('tiktokFlowOutputCountSelect')?.value || '1') : '1',
+      dasterClothingMode: document.querySelector('input[name="dasterClothingMode"]:checked')?.value === 'convert' ? 'convert' : 'original',
+      sensasiPose: document.getElementById('sensasiPoseSelect')?.value || 'random',
+      // POV Tangan: slot "karakter" berisi foto background
+      backgroundImagePath: currentReelsConcept === 'pov' ? characterPath : '',
+      povVoice: document.getElementById('povVoiceSelect')?.value || 'cewek',
+      // 3D Edukasi: topik (diisi AI / manual) & jumlah adegan (suara narator dikunci di layanan)
+      eduTopic: document.getElementById('edu3dTopicInput')?.value?.trim() || '',
+      eduSceneCount: Number(document.getElementById('edu3dSceneCount')?.value) || 3,
+      // 3D Kartun: topik (kosong = otomatis) & target durasi
+      kartunTopic: document.getElementById('kartun3dTopicInput')?.value?.trim() || '',
+      kartunDuration: Number(document.getElementById('kartun3dDuration')?.value) || 80,
+      // Mode "Tempel JSON": naskah jadi dari claude.ai (sudah divalidasi) → tahap naskah AI dilewati
+      kartunSpec: kartunState?.spec || null,
+      voiceEngine: kartunState?.voiceEngine || 'gemini',
+      geminiVoice: kartunState?.geminiVoice || 'Charon',
       batchCount: isTikTok ? '1' : (document.getElementById('videoBatchCount')?.value || '1'),
       characterKeyword: isTikTok ? '' : (document.getElementById('videoCharacterKeyword')?.value || 'wanita')
     };
 
     isGeneratingVideo = true;
     btnRunFullReelsPipeline.disabled = true;
+    btnRunFullReelsPipeline.dataset.busy = '1';
     const oriHtml = btnRunFullReelsPipeline.innerHTML;
-    btnRunFullReelsPipeline.innerHTML = '<span>🎬 Memproses Pipeline AI Video...</span>';
+    btnRunFullReelsPipeline.innerHTML = '<span>Memproses Pipeline AI Video...</span>';
 
     const progressBox = document.getElementById('videoProgressBox');
     const statusTitle = document.getElementById('videoStatusTitle');
     const progressBar = document.getElementById('videoProgressBar');
-    const percentSpan = document.getElementById('videoPercent');
     const logsBox = document.getElementById('videoLogs');
 
     if (progressBox) progressBox.style.display = 'block';
-    const conceptLabel = currentReelsConcept === 'daster' ? 'DASTER' : 'JJ';
+    const conceptLabel = String(currentReelsConcept || 'jj').toUpperCase();
     if (logsBox) logsBox.innerHTML = `<div>Memulai pipeline video ${currentPlatform.toUpperCase()} [${conceptLabel}] (${parsedDuration})...</div>`;
 
-    window.electronAPI?.onVideoGenProgress?.((data) => {
-      if (statusTitle) statusTitle.textContent = data.status || 'Memproses...';
-      if (percentSpan) percentSpan.textContent = `${data.percent || 0}%`;
-      if (progressBar) progressBar.style.width = `${data.percent || 0}%`;
-      if (logsBox) {
-        logsBox.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${data.status}</div>`;
-        logsBox.scrollTop = logsBox.scrollHeight;
-      }
-    });
+    // Log progres ditangani listener global di videoGenManager (agar tidak dobel)
+    startVideoTimer();
 
     try {
-      const res = await window.electronAPI?.generateAiVideo?.(payload);
+      // Multi-worker: tiap worker membuat 1 video dengan bahan yang sama secara bersamaan.
+      // Worker berikutnya mulai 2 detik kemudian (cukup agar Chrome ChatGPT tidak dibuka di detik yang sama).
+      // 3D Edukasi membuat 3 klip Flow berurutan per video → selalu 1 worker
+      const workerCount = isTikTok && !isEdu3D && !isKartun3D ? getSelectedWorkerCount() : 1;
+      // Loop: video dibuat berulang dengan bahan & setelan yang sama (pelanggan tidak perlu input ulang)
+      // Tempel JSON 3D Kartun: 1 JSON = 1 video (loop dimatikan)
+      const loopCount = kartunQueue.length ? kartunQueue.length
+        : isTikTok && !payload.kartunSpec ? Math.min(20, Math.max(1, Number(document.getElementById('reelsLoopCount')?.value) || 1)) : 1;
+      // Log per worker: videoGenManager menyiapkan panel W1/W2 terpisah bila lebih dari 1 worker
+      window.dispatchEvent(new CustomEvent('video-workers-start', { detail: { count: workerCount } }));
+
+      const results = [];
+      // Tombol Batalkan menghentikan loop (juga saat jeda antar video)
+      let loopCancelled = false;
+      const onCancelRequested = () => { loopCancelled = true; };
+      window.addEventListener('video-cancel-requested', onCancelRequested);
+      for (let round = 1; round <= loopCount && !loopCancelled; round++) {
+        // Jeda antar video: beri waktu Chrome sebelumnya tertutup tuntas & hindari deteksi "terlalu sering" ChatGPT/Flow
+        if (round > 1) {
+          for (let s = LOOP_PAUSE_SEC; s > 0 && !loopCancelled; s--) {
+            if (statusTitle) statusTitle.textContent = `Jeda ${s} dtk sebelum video ${round} dari ${loopCount}...`;
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          if (loopCancelled) {
+            results.push({ success: false, cancelled: true, error: 'Dibatalkan pengguna' });
+            break;
+          }
+        }
+        if (loopCount > 1) {
+          if (statusTitle) statusTitle.textContent = `Video ${round} dari ${loopCount}...`;
+          if (logsBox) {
+            const line = document.createElement('div');
+            line.style.cssText = 'color:#6fcdbd;font-weight:700;margin-top:6px;';
+            line.textContent = `── Loop video ${round}/${loopCount} ──`;
+            logsBox.appendChild(line);
+            logsBox.scrollTop = logsBox.scrollHeight;
+          }
+        }
+        // 3D Edukasi: video ke-2 dst. memakai topik baru dari AI (topik form hanya untuk video pertama)
+        const queueItem = kartunQueue[round - 1] || null;
+        const roundPayload = queueItem ? { ...payload, kartunSpec: queueItem.spec }
+          : isEdu3D && round > 1 ? { ...payload, eduTopic: '' }
+          : isKartun3D && round > 1 ? { ...payload, kartunTopic: '' } : payload;
+        const runs = Array.from({ length: workerCount }, (_, i) => (async () => {
+          if (i > 0) await new Promise((r) => setTimeout(r, i * 2000));
+          return window.electronAPI?.generateAiVideo?.({ ...roundPayload, workerId: i + 1, workerCount });
+        })());
+        const settled = await Promise.allSettled(runs);
+        const roundResults = settled.map((r) => (r.status === 'fulfilled' ? r.value : { success: false, error: r.reason?.message }));
+        results.push(...roundResults);
+        // Naskah antrian yang berhasil jadi video dikeluarkan dari antrian
+        if (queueItem && roundResults.some((r) => r?.success)) removeKartunQueueItem(currentReelsConcept, queueItem.id);
+        // Video yang sudah jadi langsung tampil di Galeri Video (tidak menunggu semua loop selesai)
+        const savedNow = roundResults.filter((r) => r?.success);
+        if (savedNow.length) {
+          window.dispatchEvent(new CustomEvent('refresh-video-storage'));
+          if (logsBox) {
+            const line = document.createElement('div');
+            line.style.cssText = 'color:#34d399;font-weight:700;';
+            line.textContent = `✓ Video ${round}${loopCount > 1 ? '/' + loopCount : ''} tersimpan di folder lokal: ${savedNow.map((r) => r.fileName || '').join(', ')}`;
+            logsBox.appendChild(line);
+            logsBox.scrollTop = logsBox.scrollHeight;
+          }
+        }
+        // Berhenti bila dibatalkan atau kredit Flow habis; kegagalan lain → lanjut ke video berikutnya
+        if (roundResults.some((r) => r?.cancelled)) break;
+        if (!roundResults.some((r) => r?.success) && roundResults.some((r) => r?.code === 'INSUFFICIENT_FLOW_CREDIT')) break;
+      }
+      window.removeEventListener('video-cancel-requested', onCancelRequested);
+
+      const okCount = results.filter((r) => r?.success).length;
+      const totalPlanned = loopCount * workerCount;
+      const res = results.find((r) => r?.success) || results.find((r) => r?.cancelled) || results.find((r) => r?.code === 'INSUFFICIENT_FLOW_CREDIT') || results[0];
       if (res?.success) {
+        const elapsed = stopVideoTimer(true);
         if (statusTitle) statusTitle.textContent = 'Render Video Selesai!';
-        if (percentSpan) percentSpan.textContent = '100%';
         if (progressBar) progressBar.style.width = '100%';
-        alert(`Berhasil! Video Reels ${currentPlatform.toUpperCase()} [${conceptLabel}] selesai dibuat.`);
-        window.dispatchEvent(new CustomEvent('refresh-video-storage'));
+        const failed = results.filter((r) => !r?.success);
+        alert(totalPlanned > 1
+          ? `${okCount} dari ${totalPlanned} video Reels ${currentPlatform.toUpperCase()} [${conceptLabel}] selesai dalam ${elapsed}.${failed.length ? '\n\nGagal / berhenti: ' + failed.map((r) => r?.error || 'kesalahan sistem').join(' | ') : ''}`
+          : `Berhasil! Video Reels ${currentPlatform.toUpperCase()} [${conceptLabel}] selesai dibuat dalam ${elapsed}.`);
+        // Refresh aplikasi agar form bersih, lalu kembali ke konsep & setelan Flow yang sama
+        try {
+          sessionStorage.setItem(REELS_REOPEN_KEY, JSON.stringify({
+            concept: isTikTok ? currentReelsConcept : '',
+            selects: Object.fromEntries(REELS_KEPT_SELECTS.map((id) => [id, document.getElementById(id)?.value]))
+          }));
+        } catch (e) {}
+        window.location.reload();
+        return;
+      } else if (results.some((r) => r?.cancelled)) {
+        // Dibatalkan lewat tombol Batalkan: tidak perlu pesan gagal
+        stopVideoTimer(false);
+        if (statusTitle) statusTitle.textContent = 'Proses dibatalkan';
+      } else if (res?.code === 'INSUFFICIENT_FLOW_CREDIT') {
+        stopVideoTimer(false);
+        if (statusTitle) statusTitle.textContent = 'Kredit Google Flow tidak cukup';
+        alert('' + res.error);
       } else {
+        stopVideoTimer(false);
         alert('Gagal: ' + (res?.error || 'Terjadi kesalahan sistem.'));
       }
     } catch (err) {
+      stopVideoTimer(false);
       alert('Error: ' + err.message);
     } finally {
       isGeneratingVideo = false;
       btnRunFullReelsPipeline.disabled = false;
+      delete btnRunFullReelsPipeline.dataset.busy;
       btnRunFullReelsPipeline.innerHTML = oriHtml;
     }
   });
 
-  // 17. Listener Event Refresh Galeri Otomatis dari IPC[cite: 24]
   if (window.electronAPI?.onRefreshImagesGallery) {
     window.electronAPI.onRefreshImagesGallery(() => {
       window.dispatchEvent(new CustomEvent('refresh-image-storage'));
@@ -1246,7 +1596,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // 18. Handler Tombol Ganti Platform[cite: 24]
   const btnSwitchPlatform = document.getElementById('btnSwitchPlatform');
   btnSwitchPlatform?.addEventListener('click', () => {
     if (window.electronAPI && typeof window.electronAPI.switchPlatform === 'function') {
@@ -1256,7 +1605,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 19. Handler Tombol Logout[cite: 24]
   const btnLogout = document.getElementById('btnLogout');
   btnLogout?.addEventListener('click', async () => {
     if (confirm('Apakah Anda yakin ingin keluar dari akun ini?')) {
@@ -1265,9 +1613,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
   });
-});
+}
 
-// Helper Render UI Storyboard Frames[cite: 24]
+// Inisialisasi aman: langsung jalan tanpa bergantung pada penundaan DOMContentLoaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initDashboardApp);
+} else {
+  initDashboardApp();
+}
+
+// Helper Render UI Storyboard Frames
 function renderStoryboardFrames(items) {
   const container = document.getElementById('storyboardFramesGrid');
   if (!container) return;
@@ -1330,7 +1685,7 @@ function renderStoryboardFrames(items) {
   });
 }
 
-// Helper Render UI Video Jadi (Menyertakan seluruh data videoItem ke callback)[cite: 24]
+// Helper Render UI Video Jadi
 function renderSavedVideos(videos, onPlayCallback) {
   const container = document.getElementById('savedVideosGrid');
   const countBadge = document.getElementById('videoStorageCountBadge');

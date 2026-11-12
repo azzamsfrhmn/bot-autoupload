@@ -1,18 +1,110 @@
 {
   "name": "bot-autoupload",
-  "version": "1.0.0",
+  "version": "1.0.62",
+  "description": "Bot Auto Upload TikTok & AI Generator",
+  "author": "Etnic Store",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "npm run bundle:remotion && electron-builder --win --x64",
+    "bundle:remotion": "node scripts/build-kartun3d.js && node scripts/bundle-remotion.js"
+  },
+  "build": {
+    "appId": "com.etnic.botautoupload",
+    "productName": "Bot Auto Upload",
+    "icon": "src/renderer/assets/icon.ico",
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://license.etnicstore.com/updates/"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "icon": "src/renderer/assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Bot Auto Upload",
+      "installerIcon": "src/renderer/assets/icon.ico",
+      "uninstallerIcon": "src/renderer/assets/icon.ico",
+      "uninstallDisplayName": "Bot Auto Upload",
+      "differentialPackage": true,
+      "include": "build/installer.nsh"
+    },
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json",
+      "remotion-bundle/**/*",
+      "!**/sessions/**",
+      "!**/sessions/*",
+      "!**/sessions",
+      "!**/storage/**",
+      "!**/storage/*",
+      "!**/storage",
+      "!**/*accounts*.json",
+      "!**/*kalodata*.json",
+      "!**/*searchList*.json",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!test_*.js"
+    ],
+    "asarUnpack": [
+      "node_modules/playwright/**",
+      "node_modules/playwright-core/**",
+      "src/renderer/assets/**",
+      "node_modules/ffmpeg-static/**",
+      "remotion-bundle/**",
+      "node_modules/@remotion/compositor-win32-x64-msvc/**",
+      "node_modules/tesseract.js/**",
+      "node_modules/tesseract.js-core/**"
+    ],
+    "extraResources": [
+      {
+        "from": "tools/tapper/tapper.apk",
+        "to": "tapper.apk"
+      },
+      {
+        "from": "tools/ocr/eng.traineddata",
+        "to": "ocr/eng.traineddata"
+      }
+    ]
   },
   "devDependencies": {
-    "electron": "^30.0.0"
+    "@remotion/bundler": "4.0.540",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
   },
   "dependencies": {
     "@devicefarmer/adbkit": "^3.3.9",
     "@google/genai": "^2.27.0",
     "@google/generative-ai": "^0.24.1",
+    "@remotion/renderer": "4.0.540",
+    "electron-updater": "^6.8.11",
+    "ffmpeg-static": "^5.2.0",
     "node-cron": "^3.0.3",
-    "playwright": "^1.43.0"
+    "node-machine-id": "^1.1.12",
+    "playwright": "^1.43.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.540",
+    "tesseract.js": "^7.0.0"
   }
 }

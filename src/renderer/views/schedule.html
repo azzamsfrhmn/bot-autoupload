@@ -18,7 +18,27 @@
         <div class="dropzone-title">Klik atau Tarik File ke Sini</div>
         <div class="dropzone-sub">Format yang didukung: JPG, PNG, dan Video MP4</div>
       </div>
+      <button type="button" id="btnPickVideoFromGallery" class="btn-execute" style="width: 100%; margin-top: 10px; height: 38px; font-size: 12px; font-weight: 700; background: linear-gradient(135deg, #35b29f 0%, #35b29f 100%);">
+        Pilih dari Galeri Video
+      </button>
       <div class="media-preview-container" id="mediaPreviewContainer"></div>
+    </div>
+
+    <!-- KONSEP VIDEO (MENENTUKAN PENGATURAN AUDIO SAAT POSTING TIKTOK) -->
+    <div id="wrapperScheduleConcept" class="form-group" style="margin-bottom: 14px;">
+      <div class="form-label-row">
+        <span class="form-label" style="font-size: 12px; color: #fff;">Konsep Video</span>
+        <span id="scheduleConceptHint" class="form-hint" style="font-size: 11px;">Wajib dipilih: menentukan pengaturan suara saat posting</span>
+      </div>
+      <div class="mode-switch-wrapper" style="margin-bottom: 0;">
+        <button type="button" class="mode-btn schedule-concept-btn" data-concept="jj" title="Musik -60 dB, suara asli video tetap">JJ</button>
+        <button type="button" class="mode-btn schedule-concept-btn" data-concept="daster" title="Suara asli video tetap, musik -25 dB">Daster</button>
+        <button type="button" class="mode-btn schedule-concept-btn" data-concept="sensasi" title="Suara asli (suara karakter) tetap, musik -25 dB">Sensasi</button>
+        <button type="button" class="mode-btn schedule-concept-btn" data-concept="pov" title="Suara asli (voice over) tetap, musik -30 dB">POV Tangan</button>
+        <button type="button" class="mode-btn schedule-concept-btn" data-concept="edu3d" title="Narasi AI tetap, musik -30 dB">3D Edukasi</button>
+        <button type="button" class="mode-btn schedule-concept-btn" data-concept="kartun3d" title="Dialog & musik bawaan video tetap, musik TikTok -30 dB">3D Kartun</button>
+        <button type="button" class="mode-btn schedule-concept-btn" data-concept="carakerja3d" title="Narasi & musik bawaan video tetap, musik TikTok -30 dB">3D Cara Kerja</button>
+      </div>
     </div>
 
     <!-- TAUTKAN PRODUK SHOWCASE TIKTOK -->
@@ -27,13 +47,41 @@
         <label for="scheduleTiktokPid" class="form-label" style="font-size: 12px; color: #fff;">Tautkan Produk Showcase (Keranjang Kuning)</label>
         <span class="form-hint" style="font-size: 11px;">Product ID (PID) Showcase</span>
       </div>
+      <div class="mode-switch-wrapper" style="margin-bottom: 10px;">
+        <button type="button" class="mode-btn schedule-basket-btn active" data-basket="on">Pakai Keranjang Kuning</button>
+        <button type="button" class="mode-btn schedule-basket-btn" data-basket="off">Tanpa Keranjang Kuning</button>
+      </div>
+      <div id="scheduleBasketFields">
       <div style="display: flex; gap: 8px;">
         <input type="text" id="scheduleTiktokPid" class="input-box" placeholder="Pilih produk atau ketik PID..." style="flex: 1; height: 38px; font-size: 12px;">
-        <button type="button" id="btnPickProductForSchedule" class="btn-execute" style="width: auto; padding: 0 16px; height: 38px; font-size: 12px; font-weight: 700; white-space: nowrap; background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);">
-          🛍️ Ambil dari Showcase
+        <button type="button" id="btnPickProductForSchedule" class="btn-execute" style="width: auto; padding: 0 16px; height: 38px; font-size: 12px; font-weight: 700; white-space: nowrap; background: linear-gradient(135deg, #35b29f 0%, #e8a25c 100%);">
+          Ambil dari Showcase
         </button>
       </div>
       <div id="scheduleSelectedProductPreview" style="display: none; margin-top: 8px; font-size: 12px; color: #10b981; font-weight: 600;"></div>
+      <div class="form-label-row" style="margin-top: 10px;">
+        <label for="scheduleLinkTitle" class="form-label" style="font-size: 12px; color: #fff;">Judul Keranjang Kuning</label>
+        <span class="form-hint" style="font-size: 11px;"><span id="scheduleLinkTitleCounter">0</span> / 30 · kosongkan = dibuat AI</span>
+      </div>
+      <input type="text" id="scheduleLinkTitle" class="input-box" maxlength="30" placeholder="Contoh: Daster Adem Busui Friendly" style="width: 100%; height: 38px; font-size: 12px;">
+      </div>
+    </div>
+
+    <!-- SHOPEE: posting lewat HP Android (ADB + Tap Server) -->
+    <div id="wrapperScheduleShopee" class="form-group" style="margin-bottom: 14px; display: none;">
+      <div id="shopeeHpStatus" style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; background:rgba(238,77,45,0.06); border:1px solid rgba(238,77,45,0.25); border-radius: var(--radius-md); margin-bottom:10px;">
+        <span id="shopeeHpStatusText" style="font-size:12px; color:#fff;">Mengecek HP...</span>
+        <div style="display:flex; gap:6px;">
+          <button type="button" id="btnShopeeHpRefresh" class="btn-execute" style="width:auto; padding:0 12px; height:32px; font-size:11px; background:rgba(255,255,255,0.08);">Cek HP</button>
+          <button type="button" id="btnShopeeHpSetup" class="btn-execute" style="width:auto; padding:0 12px; height:32px; font-size:11px; background:#ee4d2d;">Siapkan HP</button>
+        </div>
+      </div>
+      <div class="form-label-row">
+        <label for="shopeeProductLinks" class="form-label" style="font-size: 12px; color: #fff;">Link Produk Affiliate (Keranjang)</label>
+        <span class="form-hint" style="font-size: 11px;">1 link per baris · maks 50 · kosong = tanpa keranjang</span>
+      </div>
+      <textarea id="shopeeProductLinks" rows="3" class="input-box" placeholder="https://shopee.co.id/product/...&#10;https://s.shopee.co.id/an_redir?origin_link=..." style="width:100%; font-size:12px;"></textarea>
+      <div class="form-hint" style="font-size:11px; margin-top:6px;">HP Android harus terhubung (USB/WiFi), app Shopee login, Tap Server aktif. Posting berjalan saat jam jadwal (PC & HP harus menyala).</div>
     </div>
 
     <div class="form-group">
@@ -45,12 +93,12 @@
       <div class="ai-caption-bar" style="display: flex; gap: 8px; margin-bottom: 10px;">
         <input type="text" id="aiPromptInput" placeholder="Ketik topik promo..." class="input-box" style="flex: 2;">
         <select id="aiToneSelect" class="input-box" style="flex: 1;">
-          <option value="promo">🔥 Promo / Jualan</option>
-          <option value="casual">😎 Santai & Kekinian</option>
-          <option value="formal">💼 Rapi & Formal</option>
+          <option value="promo">Promo / Jualan</option>
+          <option value="casual">Santai & Kekinian</option>
+          <option value="formal">Rapi & Formal</option>
         </select>
         <button type="button" id="btnGenerateAI" class="btn-execute" style="width: auto; padding: 0 16px; white-space: nowrap;">
-          <span>✨ Buat Caption</span>
+          <span>Buat Caption</span>
         </button>
       </div>
 
@@ -73,6 +121,19 @@
       </div>
     </div>
 
+    <!-- Info: jadwal TikTok memakai Schedule bawaan TikTok (upload server 24 jam dihapus) -->
+    <label id="rowShareToFacebook" style="display: none; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding: 10px 14px; background: rgba(24, 119, 242, 0.06); border: 1px solid rgba(24, 119, 242, 0.25); border-radius: var(--radius-md); cursor: pointer;">
+      <span style="display: flex; flex-direction: column; gap: 2px;">
+        <span style="font-size: 12.5px; font-weight: 600; color: #fff;">Bagikan juga ke Facebook</span>
+        <span id="shareToFacebookHint" style="font-size: 11px; color: var(--text-dim);">Postingan Instagram ikut dibagikan ke profil Facebook yang terhubung (pengaturan "Share to" Instagram).</span>
+      </span>
+      <input type="checkbox" id="toggleShareToFacebook" style="width: 18px; height: 18px; accent-color: #1877f2; cursor: pointer;">
+    </label>
+
+    <div class="form-hint" id="schedulePlatformHint" style="font-size: 11.5px; margin-bottom: 14px; padding: 10px 14px; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);">
+      Video di-upload lebih awal & dijadwalkan langsung di TikTok. Biarkan aplikasi terbuka sampai status <b>Terjadwal di TikTok</b>, setelah itu PC boleh dimatikan.
+    </div>
+
     <button id="btnSchedule" class="btn-execute">
       <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z"/></svg>
       <span id="btnScheduleText">Jadwalkan Postingan Sekarang</span>
@@ -82,11 +143,27 @@
   </div>
 </div>
 
+<!-- LOG POSTING (terpisah dari tombol jadwal) -->
+<div class="table-section" style="margin-top: 24px;">
+  <div class="studio-card">
+    <div class="card-header-row" style="margin-bottom: 12px;">
+      <div class="card-header-left" style="display: flex; align-items: center; gap: 8px;">
+        <h2>Log Posting</h2>
+        <span id="postLogLive" class="post-log-live" title="Sedang berjalan"></span>
+      </div>
+      <button id="btnClearPostLog" class="chip-btn">Bersihkan Log</button>
+    </div>
+    <div id="postLogList" class="post-log-list">
+      <div class="post-log-empty">Belum ada aktivitas posting.</div>
+    </div>
+  </div>
+</div>
+
 <div class="table-section" style="margin-top: 24px;">
   <div class="studio-card">
     <div class="card-header-row" style="margin-bottom: 14px;">
       <div class="card-header-left"><h2>Antrean & Riwayat Jadwal</h2></div>
-      <button id="btnRefreshSchedules" class="chip-btn">🔄 Refresh Data</button>
+      <button id="btnRefreshSchedules" class="chip-btn">Refresh Data</button>
     </div>
     <div class="table-wrapper">
       <table class="custom-table">
