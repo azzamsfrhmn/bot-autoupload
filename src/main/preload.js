@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loginShopeeAccount: () => ipcRenderer.invoke('login-shopee-account'),
   shopeeAdbStatus: () => ipcRenderer.invoke('shopee-adb-status'),
   shopeeAdbInstallTapper: () => ipcRenderer.invoke('shopee-adb-install-tapper'),
+  shopeeAdbEnableWifi: () => ipcRenderer.invoke('shopee-adb-enable-wifi'),
   shopeeAdbPair: (hostPort, code) => ipcRenderer.invoke('shopee-adb-pair', hostPort, code),
   shopeeAdbConnect: (hostPort) => ipcRenderer.invoke('shopee-adb-connect', hostPort),
   getFacebookAccounts: () => ipcRenderer.invoke('get-facebook-accounts'),

@@ -540,16 +540,22 @@ async function initDashboardApp() {
   async function refreshShopeeHpStatus() {
     const el = document.getElementById('shopeeHpStatusText');
     const btnSetup = document.getElementById('btnShopeeHpSetup');
+    const btnWifi = document.getElementById('btnShopeeHpWifi');
     if (!el) return;
     el.textContent = 'Mengecek HP...';
+    if (btnWifi) btnWifi.style.display = 'none';
     try {
       const s = await window.electronAPI.shopeeAdbStatus();
       if (!s || !s.connected) {
-        el.innerHTML = '🔴 HP tidak terhubung. Colok USB (USB debugging ON) atau pair WiFi.';
+        el.innerHTML = s && s.savedIp
+          ? `🔴 HP tidak ditemukan di WiFi (terakhir ${s.savedIp}). Pastikan HP menyala & di WiFi yang sama dengan PC. Kalau HP baru restart: colok USB → klik "Aktifkan WiFi".`
+          : '🔴 HP tidak terhubung. Colok USB (USB debugging ON), lalu klik "Aktifkan WiFi" agar ke depannya tanpa kabel.';
         if (btnSetup) btnSetup.textContent = 'Siapkan HP';
         return;
       }
-      const model = s.model || 'HP';
+      // tombol Aktifkan WiFi hanya saat HP tercolok USB
+      if (btnWifi && s.via === 'usb') btnWifi.style.display = '';
+      const model = `${s.model || 'HP'} · ${s.via === 'wifi' ? '📶 WiFi ' + (s.device || '').split(':')[0] : '🔌 USB'}`;
       if (!s.shopee) { el.innerHTML = `🟠 ${model}: app Shopee belum terpasang.`; return; }
       if (!s.tapper) { el.innerHTML = `🟠 ${model}: Tap Server belum terpasang. Klik "Siapkan HP".`; if (btnSetup) btnSetup.textContent = 'Kirim APK'; return; }
       if (!s.enabled) { el.innerHTML = `🟠 ${model}: Tap Server belum aktif. Aktifkan di Setelan > Aksesibilitas > Tap Server.`; return; }
@@ -563,6 +569,19 @@ async function initDashboardApp() {
     if (_shopeeHpWired) return;
     _shopeeHpWired = true;
     document.getElementById('btnShopeeHpRefresh')?.addEventListener('click', () => refreshShopeeHpStatus());
+    document.getElementById('btnShopeeHpWifi')?.addEventListener('click', async () => {
+      const el = document.getElementById('shopeeHpStatusText');
+      if (el) el.textContent = 'Mengaktifkan mode WiFi...';
+      try {
+        const r = await window.electronAPI.shopeeAdbEnableWifi();
+        if (r && r.success) {
+          if (el) el.innerHTML = `✅ Mode WiFi aktif (${r.ip}). Sekarang kabel USB boleh dicabut — HP tetap dicas & di WiFi yang sama.`;
+          setTimeout(() => refreshShopeeHpStatus(), 4000);
+        } else {
+          if (el) el.textContent = r?.error || 'Gagal mengaktifkan WiFi.';
+        }
+      } catch (e) { if (el) el.textContent = 'Gagal: ' + e.message; }
+    });
     document.getElementById('btnShopeeHpSetup')?.addEventListener('click', async () => {
       const el = document.getElementById('shopeeHpStatusText');
       try {

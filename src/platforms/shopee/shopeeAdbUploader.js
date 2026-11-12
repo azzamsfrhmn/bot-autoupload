@@ -83,6 +83,137 @@ async function getConnectedDevice(preferSerial = '') {
 async function pairWifi(hostPort, code) { await ensureServer(); return runAdb(`pair ${hostPort} ${code}`); }
 async function connectWifi(hostPort) { await ensureServer(); return runAdb(`connect ${hostPort}`); }
 
+// ===================== HP lewat WiFi (tanpa colok USB terus) =====================
+// Koneksi lokal per pengguna: PC ⇄ WiFi rumah ⇄ HP. IP & nomor seri HP disimpan di
+// sessions/shopee_hp.json. Sebelum posting: coba IP tersimpan → kalau gagal, pindai
+// jaringan lokal (port 5555) dan cocokkan nomor seri.
+const WIFI_PORT = 5555;
+const HP_CONFIG = () => path.join(process.cwd(), 'sessions', 'shopee_hp.json');
+
+function loadHpConfig() {
+  try { return JSON.parse(fs.readFileSync(HP_CONFIG(), 'utf8')) || {}; } catch (e) { return {}; }
+}
+function saveHpConfig(cfg) {
+  try {
+    fs.mkdirSync(path.dirname(HP_CONFIG()), { recursive: true });
+    fs.writeFileSync(HP_CONFIG(), JSON.stringify({ ...cfg, savedAt: new Date().toISOString() }, null, 2));
+  } catch (e) {}
+}
+
+const isWifiSerial = (s) => /^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(String(s || ''));
+
+async function getSerialNo(device) {
+  return (await runAdb('shell getprop ro.serialno', device).catch(() => '')).trim();
+}
+async function getWifiIp(device) {
+  const out = await runAdb('shell ip -f inet addr show wlan0', device).catch(() => '');
+  const m = out.match(/inet (\d+\.\d+\.\d+\.\d+)/);
+  return m ? m[1] : '';
+}
+
+// Aktifkan mode WiFi saat HP masih tercolok USB. Simpan IP + serial.
+async function enableWifi(log = () => {}) {
+  await ensureServer();
+  const devs = await listDevices();
+  const usb = devs.find((d) => d.state === 'device' && !isWifiSerial(d.serial) && !/^emulator-/.test(d.serial));
+  if (!usb) throw new Error('Colok HP lewat USB dulu (USB debugging ON), lalu klik Aktifkan WiFi.');
+  const ip = await getWifiIp(usb.serial);
+  if (!ip) throw new Error('HP belum tersambung WiFi. Sambungkan HP ke WiFi yang sama dengan PC.');
+  const serialNo = await getSerialNo(usb.serial);
+  log(`Mengaktifkan mode WiFi (${ip})...`);
+  await runAdb(`tcpip ${WIFI_PORT}`, usb.serial).catch(() => {});
+  await sleep(3000);
+  let ok = false;
+  for (let i = 0; i < 4 && !ok; i++) {
+    const out = await runAdb(`connect ${ip}:${WIFI_PORT}`).catch((e) => e.message);
+    ok = /connected to/i.test(out || '');
+    if (!ok) await sleep(1500);
+  }
+  if (!ok) throw new Error(`Gagal tersambung ke HP via WiFi (${ip}). Pastikan HP & PC di WiFi yang sama (bukan WiFi publik/kos yang memblokir antar-perangkat).`);
+  saveHpConfig({ serialNo, ip, port: WIFI_PORT, model: usb.model || '' });
+  return { ip, port: WIFI_PORT, serialNo, model: usb.model || '' };
+}
+
+// Subnet /24 milik PC (untuk memindai HP kalau IP-nya berubah)
+function localSubnets() {
+  const out = new Set();
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const ni of list || []) {
+      if (ni.family === 'IPv4' && !ni.internal && /^(10|172|192)\./.test(ni.address)) {
+        out.add(ni.address.split('.').slice(0, 3).join('.'));
+      }
+    }
+  }
+  return [...out];
+}
+
+function portOpen(host, port, timeout = 400) {
+  return new Promise((resolve) => {
+    const s = new (require('net').Socket)();
+    let done = false;
+    const end = (v) => { if (!done) { done = true; s.destroy(); resolve(v); } };
+    s.setTimeout(timeout);
+    s.once('connect', () => end(true));
+    s.once('timeout', () => end(false));
+    s.once('error', () => end(false));
+    s.connect(port, host);
+  });
+}
+
+async function scanForPhone(serialNo, subnets, log = () => {}) {
+  for (const net of subnets) {
+    log(`Mencari HP di jaringan ${net}.x ...`);
+    const hosts = Array.from({ length: 254 }, (_, i) => `${net}.${i + 1}`);
+    const open = [];
+    for (let i = 0; i < hosts.length; i += 64) {
+      const batch = hosts.slice(i, i + 64);
+      const res = await Promise.all(batch.map((h) => portOpen(h, WIFI_PORT)));
+      batch.forEach((h, k) => { if (res[k]) open.push(h); });
+    }
+    for (const h of open) {
+      const out = await runAdb(`connect ${h}:${WIFI_PORT}`).catch((e) => e.message);
+      if (!/connected to/i.test(out || '')) continue;
+      const sn = await getSerialNo(`${h}:${WIFI_PORT}`);
+      if (!serialNo || sn === serialNo) return h;
+      await runAdb(`disconnect ${h}:${WIFI_PORT}`).catch(() => {});
+    }
+  }
+  return null;
+}
+
+// Pastikan ada HP tersambung (USB atau WiFi). Return serial adb atau null.
+async function ensureConnected(preferSerial = '', log = () => {}) {
+  await ensureServer();
+  // bersihkan entri WiFi basi (offline) supaya tidak dipilih
+  for (const d of await listDevices()) {
+    if (isWifiSerial(d.serial) && d.state !== 'device') await runAdb(`disconnect ${d.serial}`).catch(() => {});
+  }
+  const already = await getConnectedDevice(preferSerial);
+  if (already) return already;
+
+  const cfg = loadHpConfig();
+  if (!cfg.ip) return null;
+  log(`Menyambung ulang HP via WiFi (${cfg.ip})...`);
+  // cek port cepat dulu: kalau IP lama mati, jangan tunggu timeout adb connect (~20 dtk)
+  const reachable = await portOpen(cfg.ip, cfg.port || WIFI_PORT, 800);
+  const out = reachable ? await runAdb(`connect ${cfg.ip}:${cfg.port || WIFI_PORT}`).catch((e) => e.message) : '';
+  if (/connected to/i.test(out || '')) {
+    const serial = `${cfg.ip}:${cfg.port || WIFI_PORT}`;
+    const sn = await getSerialNo(serial);
+    if (!cfg.serialNo || sn === cfg.serialNo) return serial;
+    await runAdb(`disconnect ${serial}`).catch(() => {});
+  }
+  // IP berubah → pindai jaringan lokal
+  const subnets = [...new Set([cfg.ip.split('.').slice(0, 3).join('.'), ...localSubnets()])];
+  const found = await scanForPhone(cfg.serialNo, subnets, log);
+  if (found) {
+    saveHpConfig({ ...cfg, ip: found });
+    log(`HP ditemukan di IP baru ${found}.`);
+    return `${found}:${WIFI_PORT}`;
+  }
+  return null;
+}
+
 async function getScreenSize(device) {
   try {
     const res = await runAdb('shell wm size', device);
@@ -187,6 +318,7 @@ const RATIO = {
 function loadRatioOverrides(model) {
   const files = [
     process.env.SHOPEE_RATIO_FILE,
+    path.join(process.cwd(), 'sessions', 'shopee_ratio_overrides.json'),
     path.resolve(__dirname, '../../../sessions/shopee_ratio_overrides.json'),
     process.resourcesPath ? path.join(process.resourcesPath, 'shopee_ratio_overrides.json') : null
   ].filter(Boolean);
@@ -254,8 +386,13 @@ async function postShopeeVideo(opts) {
 
   if (!videoPath || !fs.existsSync(videoPath)) throw new Error('Berkas video tidak ditemukan di komputer.');
 
-  const device = await getConnectedDevice(serial);
-  if (!device) throw new Error('HP Android tidak terhubung (ADB). Hubungkan HP dulu.');
+  const device = await ensureConnected(serial, log);
+  if (!device) {
+    const cfg = loadHpConfig();
+    throw new Error(cfg.ip
+      ? `HP tidak ditemukan di WiFi (terakhir ${cfg.ip}). Pastikan HP menyala & di WiFi yang sama dengan PC (bukan data seluler). Kalau HP baru restart: colok USB sekali lalu klik "Aktifkan WiFi".`
+      : 'HP Android tidak terhubung. Colok USB (USB debugging ON), lalu klik "Aktifkan WiFi" supaya ke depannya tanpa kabel.');
+  }
   if (!(await hasShopee(device))) throw new Error('Aplikasi Shopee belum terpasang di HP.');
   if (!(await hasTapper(device))) throw new Error('Tap Server belum terpasang di HP.');
   if (!(await tapperEnabled(device))) throw new Error('Tap Server belum diaktifkan di Setelan > Aksesibilitas.');
@@ -412,6 +549,10 @@ module.exports = {
   getConnectedDevice,
   pairWifi,
   connectWifi,
+  enableWifi,
+  ensureConnected,
+  loadHpConfig,
+  isWifiSerial,
   getScreenSize,
   hasShopee,
   hasTapper,

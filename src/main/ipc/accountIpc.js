@@ -954,15 +954,23 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
   safeHandle('shopee-adb-status', async () => {
     try {
       const m = shopeeAdb();
-      const device = await m.getConnectedDevice();
-      if (!device) return { connected: false };
+      const saved = m.loadHpConfig();
+      const device = await m.ensureConnected();   // USB, atau sambung ulang WiFi (pindai jika IP berubah)
+      if (!device) return { connected: false, savedIp: saved.ip || '' };
       const [shopee, tapper, enabled, screen] = await Promise.all([
         m.hasShopee(device), m.hasTapper(device), m.tapperEnabled(device), m.getScreenSize(device)
       ]);
       const devs = await m.listDevices();
       const info = devs.find((d) => d.serial === device) || {};
-      return { connected: true, device, model: info.model || '', shopee, tapper, enabled, screen };
+      const via = m.isWifiSerial(device) ? 'wifi' : 'usb';
+      return { connected: true, device, via, model: info.model || saved.model || '', shopee, tapper, enabled, screen,
+        savedIp: m.loadHpConfig().ip || '' };
     } catch (e) { return { connected: false, error: e.message }; }
+  });
+
+  safeHandle('shopee-adb-enable-wifi', async () => {
+    try { return { success: true, ...(await shopeeAdb().enableWifi()) }; }
+    catch (e) { return { success: false, error: e.message }; }
   });
 
   safeHandle('shopee-adb-install-tapper', async () => {
