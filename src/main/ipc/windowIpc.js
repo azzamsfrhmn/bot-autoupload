@@ -2,21 +2,31 @@
  * src/main/ipc/windowIpc.js
  */
 module.exports = function registerWindowIpc(ipcMain, ctx) {
-  ipcMain.on('window-minimize', () => {
+  const minimize = () => {
     const win = ctx.getMainWindow();
     if (win) win.minimize();
-  });
+  };
 
-  ipcMain.on('window-maximize', () => {
+  const maximize = () => {
     const win = ctx.getMainWindow();
     if (win) {
       if (win.isMaximized()) win.unmaximize();
       else win.maximize();
     }
-  });
+  };
 
-  ipcMain.on('window-close', () => {
+  const close = () => {
     const win = ctx.getMainWindow();
     if (win) win.close();
-  });
+  };
+
+  // Support kedua format penamaan event
+  ipcMain.on('window-minimize', minimize);
+  ipcMain.on('window:minimize', minimize);
+
+  ipcMain.on('window-maximize', maximize);
+  ipcMain.on('window:maximize', maximize);
+
+  ipcMain.on('window-close', close);
+  ipcMain.on('window:close', close);
 };

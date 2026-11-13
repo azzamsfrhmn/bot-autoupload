@@ -65,10 +65,23 @@ export async function updateSidebarProfile(customAvatar = null) {
     const activeAcc = accountsData?.accounts?.find((a) => a.id === accountsData.activeAccountId) 
                    || accountsData?.accounts?.[0];
 
+    // Belum ada akun sama sekali → ajak tambah akun (bukan "@user · Sesi Aktif")
+    const statusEl = document.querySelector('#btnSidebarProfile .profile-status span:last-child');
+    const dotEl = document.querySelector('#btnSidebarProfile .status-dot');
+    if (!activeAcc) {
+      if (displayUsernameSidebar) displayUsernameSidebar.textContent = 'Belum ada akun';
+      if (statusEl) statusEl.textContent = 'Klik untuk tambah akun';
+      if (dotEl) dotEl.style.setProperty('background', '#9ca3af', 'important');   // CSS pakai !important
+      if (avatarContainer) setAvatar(avatarContainer, customAvatar || '');
+      return;
+    }
+    if (statusEl) statusEl.textContent = 'Sesi Aktif';
+    if (dotEl) dotEl.style.removeProperty('background');
+
     const profile = await window.electronAPI?.getSessionInfo?.();
     const isTikTok = profile?.platform === 'tiktok' || activeAcc?.platform === 'tiktok';
 
-    const rawUsername = activeAcc?.username || profile?.username || activeAcc?.name || (isTikTok ? 'tiktok_creator' : 'etnicpremium');
+    const rawUsername = activeAcc?.username || profile?.username || activeAcc?.name || (isTikTok ? 'tiktok_creator' : 'user');
     const cleanUsername = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
 
     if (displayUsernameSidebar) {
@@ -95,6 +108,182 @@ export async function updateSidebarProfile(customAvatar = null) {
 /**
  * Render Feed khusus format kartu video vertikal TikTok (9:16 + Views Counter)
  */
+// Profil TikTok aktif (untuk header pemutar video)
+let currentTikTokOwner = { handle: '', avatar: '' };
+
+function formatCount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value || '0');
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
+function toFileUrl(filePath) {
+  return 'file:///' + encodeURI(String(filePath).replace(/\\/g, '/')).replace(/#/g, '%23');
+}
+
+function getPostCover(post) {
+  if (post.coverLocal) return toFileUrl(post.coverLocal);
+  return post.imageUrl || post.thumbnailUrl || post.displayUrl || post.thumbnail || post.coverUrl || '';
+}
+
+function normalizeCaption(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/#\S+/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
+/**
+ * Cocokkan postingan TikTok dengan riwayat jadwal (caption sama) → post.localVideo = file video asli di PC.
+ * Dipakai pemutar karena video TikTok Shop tidak bisa diputar lewat web.
+ */
+async function attachLocalVideos(posts) {
+  let schedules = [];
+  try {
+    schedules = (await window.electronAPI?.getSchedules?.()) || [];
+  } catch (e) {
+    return;
+  }
+  const candidates = schedules
+    .filter((s) => ['success', 'selesai'].includes(s.status) && (s.filePath || s.mediaPaths?.[0]))
+    .map((s) => ({
+      key: normalizeCaption(s.caption),
+      filePath: s.filePath || s.mediaPaths[0],
+      time: new Date(s.updatedAt || s.scheduleTime || s.createdAt || 0).getTime()
+    }))
+    .filter((c) => c.key.length >= 15);
+
+  posts.forEach((post) => {
+    const key = normalizeCaption(post.caption);
+    if (key.length < 15) return;
+    const postTime = (post.createTime || 0) * 1000;
+    const matches = candidates.filter((c) => c.key === key || c.key.startsWith(key) || key.startsWith(c.key));
+    if (matches.length === 0) return;
+    matches.sort((a, b) => Math.abs(a.time - postTime) - Math.abs(b.time - postTime));
+    post.localVideo = matches[0].filePath;
+  });
+}
+
+function escapeHtml(text) {
+  return String(text || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const ICONS = {
+  play: '<path d="M8 5v14l11-7z"/>',
+  heart: '<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>',
+  comment: '<path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/>',
+  share: '<path d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/>',
+  bookmark: '<path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>'
+};
+
+function icon(name, size = 16) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="currentColor">${ICONS[name]}</svg>`;
+}
+
+/**
+ * Pemutar video seperti membuka TikTok langsung: video (pemutar resmi TikTok) + statistik & caption.
+ * Navigasi: tombol panah / keyboard, tutup dengan Esc.
+ */
+function openTikTokPlayer(posts, startIndex) {
+  document.getElementById('tiktokPlayerModal')?.remove();
+  let index = startIndex;
+
+  const modal = document.createElement('div');
+  modal.id = 'tiktokPlayerModal';
+  modal.style.cssText = 'position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: 24px;';
+  document.body.appendChild(modal);
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') close();
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') go(1);
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') go(-1);
+  };
+  function close() {
+    modal.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+  function go(step) {
+    const next = index + step;
+    if (next >= 0 && next < posts.length) {
+      index = next;
+      render();
+    }
+  }
+  document.addEventListener('keydown', onKey);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  function statRow(name, label, value) {
+    return `
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border-subtle);">
+        <span style="width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center;">${icon(name)}</span>
+        <span style="flex: 1; color: var(--text-muted); font-size: 13px;">${label}</span>
+        <strong style="font-size: 15px;">${formatCount(value ?? 0)}</strong>
+      </div>`;
+  }
+
+  function navButton(step, disabled) {
+    return `<button type="button" data-nav="${step}" ${disabled ? 'disabled' : ''} style="width: 40px; height: 40px; border-radius: 50%; border: none; background: rgba(255,255,255,0.14); color: #fff; cursor: pointer; font-size: 18px; opacity: ${disabled ? 0.3 : 1};">${step < 0 ? '&#8593;' : '&#8595;'}</button>`;
+  }
+
+  function render() {
+    const post = posts[index];
+    const url = post.url || post.permalink || '';
+    const date = post.createTime
+      ? new Date(post.createTime * 1000).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '';
+    // Video TikTok Shop tidak bisa diputar di web (hanya di aplikasi TikTok): putar file lokal hasil bot jika ada
+    const coverHtml = `
+      <img src="${getPostCover(post)}" style="height: 100%; aspect-ratio: 9 / 16; max-width: 100%; object-fit: cover; opacity: 0.45;">
+      <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 260px; text-align: center; color: #fff; font-size: 13px; line-height: 1.5; text-shadow: 0 1px 4px rgba(0,0,0,0.8);">
+        File video asli tidak ditemukan di PC ini.<br>Video TikTok Shop hanya bisa diputar di aplikasi TikTok.
+      </div>`;
+    const media = post.localVideo
+      ? `<video src="${toFileUrl(post.localVideo)}" autoplay loop controls playsinline style="height: 100%; aspect-ratio: 9 / 16; max-width: 100%; background: #000;"></video>`
+      : coverHtml;
+
+    modal.innerHTML = `
+      <div style="display: flex; height: min(86vh, 820px); max-width: 1000px; width: 100%; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 12px; overflow: hidden;">
+        <div style="flex: 1; min-width: 0; background: #000; display: flex; align-items: center; justify-content: center; position: relative;">
+          ${media}
+          <div style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px;">
+            ${navButton(-1, index === 0)}
+            ${navButton(1, index === posts.length - 1)}
+          </div>
+        </div>
+        <div style="width: 340px; flex-shrink: 0; display: flex; flex-direction: column; padding: 18px 20px; overflow-y: auto; color: var(--text-main);">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
+            ${currentTikTokOwner.avatar ? `<img src="${currentTikTokOwner.avatar}" referrerpolicy="no-referrer" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">` : ''}
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-weight: 700; font-size: 14px;">${escapeHtml(currentTikTokOwner.handle)}</div>
+              <div style="font-size: 12px; color: var(--text-dim);">${date}</div>
+            </div>
+            <button type="button" data-close style="width: 32px; height: 32px; border-radius: 50%; border: none; background: rgba(255,255,255,0.08); color: var(--text-main); cursor: pointer; font-size: 15px;">&#10005;</button>
+          </div>
+          <div style="font-size: 13px; line-height: 1.55; white-space: pre-wrap; margin-bottom: 14px; user-select: text;">${escapeHtml(post.caption)}</div>
+          ${statRow('play', 'Ditonton', post.viewsCount ?? post.playCount)}
+          ${statRow('heart', 'Suka', post.likeCount)}
+          ${statRow('comment', 'Komentar', post.commentCount)}
+          ${statRow('share', 'Dibagikan', post.shareCount)}
+          ${statRow('bookmark', 'Disimpan', post.collectCount)}
+          <div style="margin-top: auto; padding-top: 16px; display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 11.5px; color: var(--text-dim); text-align: center;">${index + 1} dari ${posts.length} video · tombol panah untuk pindah, Esc untuk tutup</div>
+            ${url ? '<button type="button" data-open style="height: 38px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--bg-card-hover); color: var(--text-main); font-weight: 600; cursor: pointer;">Buka di TikTok (lihat komentar)</button>' : ''}
+          </div>
+        </div>
+      </div>`;
+
+    modal.querySelector('[data-close]')?.addEventListener('click', close);
+    modal.querySelector('[data-open]')?.addEventListener('click', () => window.electronAPI?.openExternalUrl?.(url));
+    modal.querySelectorAll('[data-nav]').forEach((btn) => btn.addEventListener('click', () => go(Number(btn.dataset.nav))));
+  }
+
+  render();
+}
+
 function renderTikTokFeedGrid(posts) {
   const postsContainer = document.getElementById('tiktokPostsContainer');
   if (!postsContainer) return;
@@ -104,42 +293,34 @@ function renderTikTokFeedGrid(posts) {
     return;
   }
 
+  attachLocalVideos(posts);
   postsContainer.innerHTML = '';
-  posts.forEach((post) => {
+  posts.forEach((post, idx) => {
     const item = document.createElement('div');
-    item.style.cssText = `
-      position: relative;
-      width: 100%;
-      aspect-ratio: 9 / 16;
-      border-radius: 8px;
-      overflow: hidden;
-      background: #181920;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-      transition: transform 0.18s ease;
-    `;
+    item.style.cssText = 'position: relative; width: 100%; aspect-ratio: 3 / 4; border-radius: 8px; overflow: hidden; background: #1b1d20; cursor: pointer;';
 
-    const imgSrc = post.imageUrl || post.thumbnailUrl || post.displayUrl || post.thumbnail || post.coverUrl || '';
-    const views = post.viewsCount || post.playCount || post.views || '0';
+    const views = post.viewsCount ?? post.playCount ?? post.views ?? 0;
+    const hasStats = post.likeCount !== undefined;
 
     item.innerHTML = `
-      <img src="${imgSrc}" alt="${post.caption || 'Video TikTok'}" loading="lazy" referrerpolicy="no-referrer" style="width: 100%; height: 100%; object-fit: cover; display: block;" onerror="this.style.opacity='0.2'">
-      <div style="position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.1) 45%, transparent 100%); pointer-events: none;"></div>
-      <div style="position: absolute; bottom: 8px; left: 8px; display: flex; align-items: center; gap: 5px; color: #fff; font-size: 13px; font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,0.8);">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-        <span>${views}</span>
+      <img src="${getPostCover(post)}" alt="" loading="lazy" referrerpolicy="no-referrer" style="width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.25s ease;" onerror="this.style.opacity='0'">
+      <div style="position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 40%); pointer-events: none;"></div>
+      ${post.isPinned ? '<span style="position: absolute; top: 8px; left: 8px; background: #fe2c55; color: #fff; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 4px;">Disematkan</span>' : ''}
+      <div style="position: absolute; bottom: 8px; left: 8px; display: flex; align-items: center; gap: 4px; color: #fff; font-size: 13px; font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,0.8);">
+        ${icon('play', 15)}<span>${formatCount(views)}</span>
       </div>
+      ${hasStats ? `
+        <div class="tiktok-post-hover" style="position: absolute; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; gap: 16px; color: #fff; font-size: 14px; font-weight: 700; opacity: 0; transition: opacity 0.18s ease;">
+          <span style="display: flex; align-items: center; gap: 5px;">${icon('heart', 18)}${formatCount(post.likeCount)}</span>
+          <span style="display: flex; align-items: center; gap: 5px;">${icon('comment', 18)}${formatCount(post.commentCount)}</span>
+        </div>` : ''}
     `;
 
-    item.onmouseenter = () => { item.style.transform = 'translateY(-3px)'; };
-    item.onmouseleave = () => { item.style.transform = 'translateY(0)'; };
-
-    item.onclick = () => {
-      if (post.url || post.permalink) {
-        window.electronAPI?.openExternalUrl?.(post.url || post.permalink);
-      }
-    };
-
+    const img = item.querySelector('img');
+    const hover = item.querySelector('.tiktok-post-hover');
+    item.onmouseenter = () => { if (hover) hover.style.opacity = '1'; img.style.transform = 'scale(1.04)'; };
+    item.onmouseleave = () => { if (hover) hover.style.opacity = '0'; img.style.transform = 'scale(1)'; };
+    item.onclick = () => openTikTokPlayer(posts, idx);
     item.title = post.caption || '';
     postsContainer.appendChild(item);
   });
@@ -149,17 +330,18 @@ function renderTikTokFeedGrid(posts) {
  * Render tata letak lengkap TikTok Web (Header + Tab + Grid Postingan)
  */
 function renderTikTokProfileLayout(container, profile, activeAcc, initialPosts = null) {
-  const displayTitle = activeAcc?.name || activeAcc?.fullName || profile?.fullName || activeAcc?.username || profile?.username || 'TikTok Creator';
-  const handle = (activeAcc?.username || activeAcc?.uniqueId || profile?.uniqueId || profile?.username || 'creator').replace(/^@/, '');
-  const followingCount = profile?.followingCount ?? activeAcc?.followingCount ?? 1;
+  const displayTitle = activeAcc?.name || activeAcc?.fullName || profile?.fullName || profile?.name || activeAcc?.username || profile?.username || 'TikTok Creator';
+  const handle = (activeAcc?.username || activeAcc?.uniqueId || profile?.uniqueId || profile?.username || '').replace(/^@/, '');
+  const followingCount = profile?.followingCount ?? activeAcc?.followingCount ?? 0;
   const followersCount = profile?.followersCount ?? activeAcc?.followersCount ?? 0;
   const likesCount = profile?.likesCount ?? activeAcc?.likesCount ?? profile?.likeCount ?? 0;
-  const bio = activeAcc?.biography || profile?.biography || 'Outfit Wanita Pilihan ✨\nBudget minimal, gaya maksimal 💵\nCek di showcase 👇';
   
+  const bio = activeAcc?.biography || profile?.biography || 'Belum ada bio.';
   const picUrl = activeAcc?.avatar || activeAcc?.profilePicUrl || profile?.avatar || profile?.profilePicUrl || '';
+  currentTikTokOwner = { handle: handle ? '@' + handle : displayTitle, avatar: picUrl };
 
   container.innerHTML = `
-    <div style="background: #000; color: #fff; min-height: 80vh; padding: 28px 36px; border-radius: var(--radius-lg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); color: var(--text-main); min-height: 80vh; padding: 28px 36px; border-radius: var(--radius-lg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
       <!-- HEADER TIKTOK -->
       <div style="display: flex; gap: 32px; align-items: flex-start; margin-bottom: 24px;">
         <div id="tiktokAvatarWrapper" style="width: 130px; height: 130px; min-width: 130px; border-radius: 50%; overflow: hidden; background: #27354a; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,0.6);"></div>
@@ -167,7 +349,7 @@ function renderTikTokProfileLayout(container, profile, activeAcc, initialPosts =
         <div style="flex: 1; min-width: 0;">
           <div style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;">
             <h1 style="font-size: 26px; font-weight: 700; color: #fff; margin: 0; letter-spacing: -0.3px;">${displayTitle}</h1>
-            <span style="font-size: 15px; color: rgba(255, 255, 255, 0.55); font-weight: 400;">| ${handle}</span>
+            ${handle ? `<span style="font-size: 15px; color: rgba(255, 255, 255, 0.55); font-weight: 400;">| ${handle}</span>` : ''}
           </div>
 
           <div style="display: flex; gap: 24px; align-items: center; font-size: 15px; margin-bottom: 16px;">
@@ -204,14 +386,14 @@ function renderTikTokProfileLayout(container, profile, activeAcc, initialPosts =
           Favorites
         </div>
         <div style="padding-bottom: 10px; color: rgba(255,255,255,0.5); cursor: pointer; display: flex; align-items: center; gap: 8px;">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
           Liked
         </div>
       </div>
 
       <!-- GRID POSTINGAN VIDEO TIKTOK -->
-      <div id="tiktokPostsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px;">
-        <div style="grid-column: 1 / -1; text-align: center; padding: 60px 0; color: rgba(255,255,255,0.4); font-size: 14px;">Memuat video TikTok...</div>
+      <div id="tiktokPostsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px;">
+        <div class="app-loader">Memuat video TikTok...</div>
       </div>
     </div>
   `;
@@ -225,22 +407,19 @@ function renderTikTokProfileLayout(container, profile, activeAcc, initialPosts =
     }
   }
 
-  // Tombol Refresh Profil TikTok: Panggil sinkronisasi CDP langsung
+  // Tombol Refresh Profil Manual
   const btnRefreshTT = document.getElementById('btnRefreshTikTokProfile');
   btnRefreshTT?.addEventListener('click', async () => {
     btnRefreshTT.disabled = true;
     btnRefreshTT.textContent = 'Memperbarui...';
     try {
-      const syncRes = await (window.electronAPI?.invoke 
-        ? window.electronAPI.invoke('tiktok:sync-profile', activeAcc?.id || activeAcc?.username)
-        : window.electronAPI?.syncTikTokProfile?.(activeAcc?.id || activeAcc?.username));
-
-      if (syncRes && syncRes.success && syncRes.account) {
-        await updateSidebarProfile(syncRes.account.avatar);
-        await loadFullProfile(syncRes.account, syncRes.posts);
+      // Tombol manual: paksa ambil data baru dari TikTok (abaikan jeda 30 menit)
+      const refreshedData = await window.electronAPI?.refreshProfile({ force: true });
+      if (refreshedData && refreshedData.profile) {
+        await updateSidebarProfile(refreshedData.profile.avatar);
+        renderTikTokProfileLayout(container, refreshedData.profile, refreshedData.profile, refreshedData.posts);
       } else {
-        const res = await window.electronAPI?.refreshProfile();
-        await loadFullProfile(res?.profile, res?.posts);
+        await loadFullProfile();
       }
     } catch (e) {
       console.error('[ProfileManager] Gagal refresh TikTok profile:', e);
@@ -250,6 +429,7 @@ function renderTikTokProfileLayout(container, profile, activeAcc, initialPosts =
     }
   });
 
+  // Tampilkan feed: Prioritaskan posts yang sudah tersedia, atau lakukan penarikan otomatis
   const postsToRender = initialPosts || activeAcc?.posts || profile?.posts;
   if (Array.isArray(postsToRender) && postsToRender.length > 0) {
     renderTikTokFeedGrid(postsToRender);
@@ -263,7 +443,7 @@ function renderTikTokProfileLayout(container, profile, activeAcc, initialPosts =
           postsContainer.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 60px 0; color: rgba(255,255,255,0.4); font-size: 14px;">Belum ada video yang diunggah.</div>';
         }
       }
-    });
+    }).catch(() => {});
   }
 }
 
@@ -289,7 +469,7 @@ export function renderFeedGrid(posts) {
       <img src="${imgSrc}" alt="Thumbnail" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.2'">
       <div class="post-overlay">
         <div class="overlay-stat">
-          <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
           <span>${likes}</span>
         </div>
         <div class="overlay-stat">
@@ -303,19 +483,122 @@ export function renderFeedGrid(posts) {
   });
 }
 
+// ===== Profil Shopee Video (data dibaca dari app Shopee di HP: beranda kreator) =====
+function renderShopeeProfileLayout(container, profile, activeAcc, note = '') {
+  const p = { ...(activeAcc || {}), ...(profile || {}) };
+  const name = p.fullName || p.name || p.username || 'Akun Shopee';
+  const handle = String(p.username || '').replace(/^@/, '');
+  const posts = Array.isArray(p.posts) ? p.posts : [];
+  const isHp = (activeAcc?.connectMethod || '') === 'hp' || Boolean(p.phoneModel);
+  const readAt = p.profileReadAt ? new Date(p.profileReadAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const stat = (v, label) => `<div><strong style="color:#fff;font-weight:700;font-size:17px">${formatCount(v || 0)}</strong> <span style="color:rgba(255,255,255,.65)">${label}</span></div>`;
+
+  container.innerHTML = `
+    <div style="background:var(--bg-card);border:1px solid var(--border-subtle);color:var(--text-main);min-height:80vh;padding:28px 36px;border-radius:var(--radius-lg)">
+      <div style="display:flex;gap:30px;align-items:flex-start;margin-bottom:22px">
+        <div id="shopeeAvatarWrapper" style="width:130px;height:130px;min-width:130px;border-radius:50%;overflow:hidden;background:#27354a;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.5)"></div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+            <h1 style="font-size:24px;font-weight:700;color:#fff;margin:0">${escapeHtml(name)}</h1>
+            <span style="font-size:11px;font-weight:700;letter-spacing:.4px;color:#fff;background:#ee4d2d;padding:3px 8px;border-radius:5px">SHOPEE VIDEO</span>
+          </div>
+          ${handle ? `<div style="font-size:14px;color:rgba(255,255,255,.55);margin-bottom:14px">@${escapeHtml(handle)}</div>` : ''}
+          <div style="display:flex;gap:24px;align-items:center;font-size:14px;margin-bottom:14px;flex-wrap:wrap">
+            ${stat(p.followingCount, 'Mengikuti')}${stat(p.followersCount, 'Pengikut')}${stat(p.likesCount, 'Suka')}
+          </div>
+          <div style="font-size:14px;color:rgba(255,255,255,.9);line-height:1.55;white-space:pre-line;margin-bottom:14px">${escapeHtml(p.biography || 'Belum ada bio.')}</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            ${isHp ? `<button id="btnRefreshShopeeProfile" type="button" class="chip-btn" style="display:flex;align-items:center;gap:6px">
+              <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+              Perbarui dari HP</button>` : ''}
+            <span style="font-size:12px;color:rgba(255,255,255,.5)">${p.phoneModel ? `📱 ${escapeHtml(p.phoneModel)}` : ''}${readAt ? ` · diperbarui ${escapeHtml(readAt)}` : ''}</span>
+          </div>
+          <div id="shopeeProfileNote" style="font-size:12px;margin-top:8px;color:#fca5a5">${escapeHtml(note)}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:32px;border-bottom:1px solid rgba(255,255,255,.12);margin-bottom:18px;font-size:15px;font-weight:600">
+        <div style="padding-bottom:10px;border-bottom:2px solid #fff;color:#fff">Posting</div>
+      </div>
+      <div id="shopeePostsContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px"></div>
+      ${posts.length ? `<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:12px">Menampilkan video yang terlihat di layar profil HP.</div>` : ''}
+    </div>`;
+
+  const av = container.querySelector('#shopeeAvatarWrapper');
+  if (p.avatar || p.profilePicUrl) setAvatar(av, p.avatar || p.profilePicUrl); else renderFallbackAvatar(av);
+
+  const grid = container.querySelector('#shopeePostsContainer');
+  if (!posts.length) {
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px 0;color:rgba(255,255,255,.4);font-size:14px">${isHp && !p.profileReadAt ? 'Klik <b>Perbarui dari HP</b> untuk membaca profil & video.' : 'Belum ada video.'}</div>`;
+  } else {
+    grid.innerHTML = posts.map((post) => `
+      <div style="position:relative;aspect-ratio:3/4;border-radius:8px;overflow:hidden;background:#1b1d20">
+        ${post.coverLocal ? `<img src="${getPostCover(post)}?t=${encodeURIComponent(p.profileReadAt || '')}" alt="" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.opacity='0'">` : ''}
+      </div>`).join('');
+  }
+
+  const btn = container.querySelector('#btnRefreshShopeeProfile');
+  btn?.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Membaca dari HP (±40 detik)...';
+    try {
+      const r = await window.electronAPI?.refreshProfile?.({ force: true });
+      const fresh = await window.electronAPI?.getAllAccounts?.();
+      const acc = fresh?.accounts?.find((a) => a.id === activeAcc?.id) || activeAcc;
+      await updateSidebarProfile(r?.profile?.avatar || acc?.avatar);
+      renderShopeeProfileLayout(container, r?.profile || {}, acc, r && r.success === false ? `❌ ${r.error || 'Gagal membaca profil dari HP.'}` : '');
+    } catch (e) {
+      renderShopeeProfileLayout(container, profile, activeAcc, `❌ ${e.message}`);
+    }
+  });
+}
+
+// Tampilan profil terkunci saat belum ada akun (isi asli disimpan agar bisa dipulihkan)
+let _profileOriginalHtml = null;
+function restoreProfileIfLocked(container) {
+  if (container.dataset.locked === '1' && _profileOriginalHtml !== null) {
+    container.innerHTML = _profileOriginalHtml;
+    delete container.dataset.locked;
+  }
+}
+function renderProfileLocked(container) {
+  if (container.dataset.locked !== '1') _profileOriginalHtml = container.innerHTML;
+  container.dataset.locked = '1';
+  container.innerHTML = `
+    <div style="max-width:520px;margin:90px auto;text-align:center;padding:40px 32px;border:1px solid var(--border-subtle, rgba(255,255,255,0.08));border-radius:16px;background:rgba(255,255,255,0.02)">
+      <div style="width:64px;height:64px;margin:0 auto 18px;border-radius:50%;background:rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      </div>
+      <div style="font-size:18px;font-weight:700;margin-bottom:8px">Profil terkunci</div>
+      <div style="font-size:13px;opacity:.75;line-height:1.6;margin-bottom:22px">Belum ada akun yang login. Silakan login / tambah akun dulu untuk melihat profil & postingan.</div>
+      <button type="button" id="btnProfileLockedLogin" class="btn-execute" style="width:auto;padding:0 22px;height:40px;font-size:13px;font-weight:700">Login / Tambah Akun</button>
+    </div>`;
+  container.querySelector('#btnProfileLockedLogin')?.addEventListener('click', () => {
+    window.dispatchEvent(new Event('open-accounts-view'));
+  });
+}
+
 export async function loadFullProfile(overrideProfile = null, overridePosts = null) {
   const viewProfileContainer = document.getElementById('viewProfile');
   if (!viewProfileContainer) return;
 
   try {
     const accountsData = await window.electronAPI?.getAllAccounts?.();
-    const activeAcc = accountsData?.accounts?.find((a) => a.id === accountsData.activeAccountId) 
+    const activeAcc = accountsData?.accounts?.find((a) => a.id === accountsData.activeAccountId)
                    || accountsData?.accounts?.[0];
+
+    // Belum ada akun → halaman profil dikunci (jangan tampilkan data/cache lama)
+    if (!activeAcc) {
+      renderProfileLocked(viewProfileContainer);
+      await updateSidebarProfile();
+      return;
+    }
+    restoreProfileIfLocked(viewProfileContainer);
 
     const profile = overrideProfile || await window.electronAPI?.getSessionInfo?.();
     const isTikTok = profile?.platform === 'tiktok' || activeAcc?.platform === 'tiktok';
 
-    const resolvedAvatar = profile?.avatar || 
+    const resolvedAvatar = profile?.avatar ||
                            profile?.profilePicUrl || 
                            activeAcc?.avatar || 
                            activeAcc?.profilePicUrl || 
@@ -325,34 +608,37 @@ export async function loadFullProfile(overrideProfile = null, overridePosts = nu
 
     await updateSidebarProfile(resolvedAvatar);
 
-    if (isTikTok) {
-      renderTikTokProfileLayout(viewProfileContainer, profile, activeAcc, overridePosts);
+    if (profile?.platform === 'shopee' || activeAcc?.platform === 'shopee') {
+      renderShopeeProfileLayout(viewProfileContainer, profile || {}, activeAcc);
+      return;
+    }
 
-      // Auto-sync profil TikTok di latar belakang jika dipanggil pertama kali tanpa override
+    if (isTikTok) {
+      const postsToPass = overridePosts || profile?.posts || activeAcc?.posts || null;
+      renderTikTokProfileLayout(viewProfileContainer, profile, activeAcc, postsToPass);
+
+      // Auto-refresh data profil dan feed di background tanpa harus klik manual
       if (!overrideProfile && activeAcc && !window._isTikTokProfileSyncing) {
         window._isTikTokProfileSyncing = true;
         setTimeout(async () => {
           try {
-            const syncRes = await (window.electronAPI?.invoke 
-              ? window.electronAPI.invoke('tiktok:sync-profile', activeAcc.id || activeAcc.username)
-              : window.electronAPI?.syncTikTokProfile?.(activeAcc.id || activeAcc.username));
-
-            if (syncRes && syncRes.success && syncRes.account) {
-              await updateSidebarProfile(syncRes.account.avatar);
-              renderTikTokProfileLayout(viewProfileContainer, syncRes.account, syncRes.account, syncRes.posts);
+            const freshData = await window.electronAPI?.refreshProfile?.();
+            if (freshData?.profile) {
+              await updateSidebarProfile(freshData.profile.avatar);
+              renderTikTokProfileLayout(viewProfileContainer, freshData.profile, freshData.profile, freshData.posts);
             }
           } catch (syncErr) {
-            console.warn('[ProfileManager] Auto-sync profil TikTok latar belakang gagal:', syncErr.message);
+            console.warn('[ProfileManager] Auto-refresh TikTok latar belakang gagal:', syncErr.message);
           } finally {
             window._isTikTokProfileSyncing = false;
           }
-        }, 200);
+        }, 150);
       }
       return;
     }
 
     // TATA LETAK INSTAGRAM
-    const username = activeAcc?.username || profile?.username || 'etnicpremium';
+    const username = activeAcc?.username || profile?.username || '';
     const cleanUsername = username.replace(/^@/, '');
 
     const pCount = profile?.postsCount ?? 0;
@@ -390,7 +676,7 @@ export async function loadFullProfile(overrideProfile = null, overridePosts = nu
               <div class="bio-category" id="bioCategoryText">${category}</div>
               <div class="bio-text" id="bioBodyText" style="white-space: pre-line; line-height: 1.5; font-size: 13px; color: var(--text-main); margin-top: 4px;">${bioText}</div>
               <a class="bio-link" id="bioLinkAnchor" href="${extUrl || '#'}" target="_blank" style="${extUrl ? 'display: inline-flex; margin-top: 6px;' : 'display: none;'}">
-                <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5-2.24-5-5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
                 <span id="bioLinkText">${extUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}</span>
               </a>
             </div>
@@ -413,7 +699,7 @@ export async function loadFullProfile(overrideProfile = null, overridePosts = nu
         </div>
 
         <div class="posts-grid-ig" id="postsContainer">
-          <div style="grid-column: span 3; text-align: center; padding: 40px 0; color: var(--text-dim);">Memuat postingan...</div>
+          <div class="app-loader">Memuat postingan...</div>
         </div>
       </div>
     `;
@@ -477,6 +763,14 @@ export async function loadFullProfile(overrideProfile = null, overridePosts = nu
 
 export function initProfileManager() {
   window.addEventListener('load-feed', () => loadFullProfile());
+
+  // Auto-refresh setiap kali tab profil diklik di antarmuka
+  const profileTabButtons = document.querySelectorAll('#tabProfile, [data-tab="profile"], [data-view="viewProfile"]');
+  profileTabButtons.forEach((tabBtn) => {
+    tabBtn.addEventListener('click', () => {
+      loadFullProfile();
+    });
+  });
 
   if (window.electronAPI && typeof window.electronAPI.onProfileUpdated === 'function') {
     window.electronAPI.onProfileUpdated((newProfile) => {

@@ -1,0 +1,17 @@
+{
+  "name": "autoupload-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Worker upload TikTok 24 jam untuk pelanggan AutoUpload",
+  "main": "worker.js",
+  "scripts": {
+    "start": "node worker.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

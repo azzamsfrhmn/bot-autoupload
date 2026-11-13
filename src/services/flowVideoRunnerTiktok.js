@@ -1,64 +1,83 @@
 /**
  * src/services/flowVideoRunnerTiktok.js
- * Arsitektur Pure Raw CDP Khusus TikTok Affiliate & Veo Pro
- * Dilengkapi Deteksi & Auto-Recovery Error Audio Google Flow (Video Senyap)
+ * Runner Pure Raw CDP Google Flow Khusus Konsep TikTok Affiliate (Mode Headless Modern & Toggle Support)
+ * 
+ * Update:
+ * - Dukungan Mode Headless On/Off dari Pengaturan AI (`accounts_config.json`)
+ * - Mode Headless Modern (--headless=new) ringan, senyap, hemat RAM & GPU
+ * - Penyamaran navigator.webdriver & emulasi User-Agent anti-bot Google Flow
+ * - Rotasi otomatis ke Akun 2 saat saldo akun utama < 10 kredit
+ * - Blokir render jika akun cadangan belum login / kuota seluruh akun habis
+ * - Menempelkan gambar ke kotak prompt dan menunggu upload selesai (chip thumbnail muncul)
+ * - Responsif penuh terhadap setelan: Rasio, Model AI, Resolusi, Durasi, dan Output x1
+ * - Monitoring render akurat (anti false-positive selesai terlalu awal)
+ * - Verifikasi fisik berkas video (> 50 KB) sebelum menyatakan selesai & memotong kredit
+ * - Auto-decrement saldo kredit akun (-10 kredit) & broadcast update ke antarmuka aplikasi
  */
 
 const { spawn } = require('child_process');
+const { cleanupFailedChrome } = require('../core/chromeCleanup');
+const { runWithFlowLease, leaseFlowAccount, releaseFlowLease, pickRandomFlowAccount, isFlowAccountShared, classifyFlowAccountFailure, isFlowAccountRested, FLOW_BLOCK_MS } = require('../core/flowWorkerPool');
+const { syncProfileClone, workerProfileDir, hasUsableClone } = require('../core/profileClone');
+const { withClipboardLock } = require('../core/clipboardLock');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
 const https = require('https');
 const { BrowserWindow, clipboard, nativeImage } = require('electron');
+// Jeda, batas tunggu & flag Chrome menyesuaikan spek perangkat (Mode Perangkat Ringan)
+const { scaleMs, chromeLiteArgs } = require('../core/perfProfile');
+const { dismissFlowOnboarding, disableFlowAgent, agreeFlowImageRights } = require('./flowOnboarding');
 
 const ROOT_DIR = process.cwd();
 const FLOW_BASE_DIR = path.resolve(ROOT_DIR, 'sessions/flow_profiles');
 const FLOW_CONFIG_FILE = path.resolve(FLOW_BASE_DIR, 'accounts_config.json');
+// Google Flow butuh minimal 12 kredit untuk 1 kali render video
+const MIN_FLOW_CREDIT = 12;
+
+// Biaya kredit asli per kombinasi setelan, dipelajari dari label Flow
+// <a class="credit-cost-link">12 kredit</a> (tiap model/resolusi/durasi/output berbeda)
+function buildFlowCostKey({ flowModel, flowResolution, flowDuration, flowOutputCount }) {
+  const model = String(flowModel || 'Veo 3.1 - Lite').replace(/google/i, '').toLowerCase().replace(/[\s\-–]+/g, ' ').trim();
+  const res = String(flowResolution || '').includes('360') ? '360p' : '720p';
+  const dur = (String(flowDuration || '').match(/\d+/) || ['8'])[0];
+  const out = (String(flowOutputCount || '').match(/\d+/) || ['1'])[0];
+  return `${model}|${res}|${dur}|x${out}`;
+}
+
+function getCachedFlowCost(key) {
+  const cache = getFlowAccountsConfigRaw().creditCostCache || {};
+  return typeof cache[key] === 'number' ? cache[key] : null;
+}
+
+function saveFlowCost(key, cost) {
+  const cfg = getFlowAccountsConfigRaw();
+  cfg.creditCostCache = { ...(cfg.creditCostCache || {}), [key]: cost };
+  saveFlowAccountsConfig(cfg);
+}
 
 const SESSIONS_VIDEOS_DIR = path.resolve(ROOT_DIR, 'sessions/generated_videos');
 const OUTPUT_VIDEOS_DIR = path.resolve(ROOT_DIR, 'storage/videos');
-const SESSIONS_IMG_DIR = path.resolve(ROOT_DIR, 'sessions/generated_images');
-const OUTPUT_IMG_DIR = path.resolve(ROOT_DIR, 'storage/images');
-const BAHAN_VIDEO_DIR = path.resolve(ROOT_DIR, 'storage/bahan_video');
-const STORYBOARDS_DIR = path.resolve(ROOT_DIR, 'storage/storyboards');
 
-[FLOW_BASE_DIR, SESSIONS_VIDEOS_DIR, OUTPUT_VIDEOS_DIR, SESSIONS_IMG_DIR, OUTPUT_IMG_DIR, BAHAN_VIDEO_DIR, STORYBOARDS_DIR].forEach((d) => {
+[FLOW_BASE_DIR, SESSIONS_VIDEOS_DIR, OUTPUT_VIDEOS_DIR].forEach((d) => {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }
 
-async function humanDelay(min = 420, max = 650) {
+async function humanDelay(min = 400, max = 650) {
   await sleep(Math.floor(min + Math.random() * (max - min)));
 }
 
-let isGenerateSlotBusy = false;
-const slotWaitQueue = [];
 
-async function acquireGenerateSlot(onProgress) {
-  if (!isGenerateSlotBusy) {
-    isGenerateSlotBusy = true;
-    onProgress(`[ANTRIAN TIKTOK] Slot generate siap.`);
-    return;
-  }
-  onProgress(`[ANTRIAN TIKTOK] Menunggu slot generate kosong...`);
-  await new Promise((resolve) => slotWaitQueue.push(resolve));
-  isGenerateSlotBusy = true;
-  onProgress(`[ANTRIAN TIKTOK] Slot generate siap.`);
-}
+// Satu akun Flow = satu render. Antrean & peminjaman akun ditangani flowWorkerPool (mendukung banyak worker).
+async function acquireGenerateSlot() {}
 
-async function releaseGenerateSlot(onProgress) {
-  onProgress(`[ANTRIAN TIKTOK] Menahan jeda finalisasi...`);
-  await sleep(3500);
-  isGenerateSlotBusy = false;
-  onProgress(`[ANTRIAN TIKTOK] Slot generate dilepas.`);
-  if (slotWaitQueue.length > 0) {
-    const next = slotWaitQueue.shift();
-    if (typeof next === 'function') next();
-  }
+async function releaseGenerateSlot() {
+  releaseFlowLease();
 }
 
 class RawCDPClient {
@@ -113,9 +132,7 @@ class RawCDPClient {
   }
 
   close() {
-    try {
-      if (this.ws) this.ws.close();
-    } catch (e) {}
+    try { if (this.ws) this.ws.close(); } catch (e) {}
   }
 
   async findElementCenter(queryOptions) {
@@ -129,7 +146,7 @@ class RawCDPClient {
 
           const matched = els.filter(el => {
             const rect = el.getBoundingClientRect();
-            if (rect.width < 12 || rect.height < 12 || rect.width > 950 || rect.height > 600) return false;
+            if (rect.width < 8 || rect.height < 8 || rect.width > 950 || rect.height > 600) return false;
             if (typeof minY === 'number' && rect.top < minY) return false;
             if (typeof maxY === 'number' && rect.bottom > maxY) return false;
 
@@ -169,15 +186,12 @@ class RawCDPClient {
         }
       })()
     `;
-    const res = await this.send('Runtime.evaluate', {
-      expression,
-      returnByValue: true,
-      awaitPromise: false
-    }).catch(() => null);
+    const res = await this.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: false }).catch(() => null);
     return res?.result?.value || null;
   }
 
   async waitForElementCenter(queryOptions, timeoutMs = 20000) {
+    timeoutMs = scaleMs(timeoutMs);
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       const pos = await this.findElementCenter(queryOptions);
@@ -192,30 +206,11 @@ class RawCDPClient {
     const jitterY = y + Math.floor(Math.random() * 4 - 2);
 
     await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: jitterX, y: jitterY });
-    await sleep(80);
+    await sleep(60);
     await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: jitterX, y: jitterY, button: 'left', clickCount: 1 });
     await sleep(60);
     await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: jitterX, y: jitterY, button: 'left', clickCount: 1 });
     await sleep(delayAfter);
-  }
-
-  async nativeDragAndDrop(startX, startY, endX, endY) {
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: startX, y: startY });
-    await sleep(200);
-    await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: startX, y: startY, button: 'left', clickCount: 1 });
-    await sleep(300);
-
-    const steps = 18;
-    for (let i = 1; i <= steps; i++) {
-      const curX = Math.round(startX + ((endX - startX) * i) / steps);
-      const curY = Math.round(startY + ((endY - startY) * i) / steps);
-      await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: curX, y: curY, button: 'left' });
-      await sleep(20);
-    }
-
-    await sleep(300);
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: endX, y: endY, button: 'left', clickCount: 1 });
-    await sleep(900);
   }
 
   async sendCtrlV() {
@@ -229,31 +224,11 @@ class RawCDPClient {
     await sleep(50);
     await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key, windowsVirtualKeyCode });
   }
-
-  async setNativeFileInput(filePath) {
-    try {
-      const doc = await this.send('DOM.getDocument', { depth: -1 });
-      const rootNodeId = doc?.root?.nodeId;
-      if (!rootNodeId) return false;
-
-      const query = await this.send('DOM.querySelector', {
-        nodeId: rootNodeId,
-        selector: 'input[type="file"]'
-      });
-
-      if (query?.nodeId) {
-        await this.send('DOM.setFileInputFiles', { nodeId: query.nodeId, files: [filePath] });
-        return true;
-      }
-    } catch (e) {}
-    return false;
-  }
 }
 
 function getOriginalChromeExecutablePath() {
   const platform = os.platform();
   const candidates = [];
-
   if (platform === 'win32') {
     candidates.push(
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -265,61 +240,103 @@ function getOriginalChromeExecutablePath() {
   } else if (platform === 'darwin') {
     candidates.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
   }
-
   return candidates.find((p) => fs.existsSync(p));
 }
 
 function purgeTransientSessionData(profileDir) {
   if (!fs.existsSync(profileDir)) return;
-  const lockFiles = [
-    'SingletonLock',
-    'SingletonCookie',
-    'SingletonSocket',
-    'lockfile',
-    'RunningChromeVersion'
-  ];
-
-  lockFiles.forEach((file) => {
+  ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'].forEach((file) => {
     const fPath = path.join(profileDir, file);
     if (fs.existsSync(fPath)) {
       try { fs.unlinkSync(fPath); } catch (e) {}
     }
   });
-
-  const prefPath = path.join(profileDir, 'Default', 'Preferences');
-  if (fs.existsSync(prefPath)) {
-    try {
-      let prefContent = fs.readFileSync(prefPath, 'utf-8');
-      if (prefContent.includes('"exit_type":"Crashed"') || prefContent.includes('"exited_cleanly":false')) {
-        prefContent = prefContent
-          .replace(/"exit_type"\s*:\s*"Crashed"/g, '"exit_type":"Normal"')
-          .replace(/"exited_cleanly"\s*:\s*false/g, '"exited_cleanly":true');
-        fs.writeFileSync(prefPath, prefContent, 'utf-8');
-      }
-    } catch (e) {}
-  }
 }
 
-function getFlowChromeArgs(cdpPort, profileDir) {
-  return [
-    `--remote-debugging-port=${cdpPort}`,
-    `--user-data-dir=${profileDir}`,
-    '--remote-allow-origins=*',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--hide-crash-restore-bubble',
-    '--disable-background-networking',
-    '--disable-client-side-phishing-detection',
-    '--disable-default-apps',
-    '--disable-hang-monitor',
-    '--disable-popup-blocking',
-    '--disable-prompt-on-repost',
-    '--disable-sync',
-    '--metrics-recording-only',
-    '--window-size=1220,920',
-    '--window-position=40,30',
-    'https://flow.google.com/'
-  ];
+function getFlowAccountsConfigRaw() {
+  let cfg = null;
+  if (fs.existsSync(FLOW_CONFIG_FILE)) {
+    try { cfg = JSON.parse(fs.readFileSync(FLOW_CONFIG_FILE, 'utf-8')); } catch (e) {}
+  }
+  if (!cfg || !Array.isArray(cfg.accounts) || cfg.accounts.length === 0) {
+    cfg = {
+      activeAccountId: 'acc_1',
+      headless: false,
+      accounts: [{ id: 'acc_1', name: 'Akun 1 (Utama)', status: 'Belum Login', credits: 'Tidak Tersedia' }]
+    };
+  }
+  return cfg;
+}
+
+function saveFlowAccountsConfig(cfg) {
+  fs.writeFileSync(FLOW_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
+  try {
+    const allWindows = BrowserWindow.getAllWindows();
+    allWindows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('flow-accounts-updated');
+      }
+    });
+  } catch (e) {}
+}
+
+function getProfileDirForAccount(accountId) {
+  const dir = path.join(FLOW_BASE_DIR, accountId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// Worker 1 membuka profil asli akun Flow; worker 2 dst. membuka salinannya (akun Google yang sama)
+
+// Saldo kredit ASLI dari panel akun Flow (avatar kanan atas → "N kredit Google Flow"). null bila tidak terbaca.
+async function readRealFlowCredit(cdp) {
+  const read = () => cdp.send('Runtime.evaluate', {
+    expression: `(() => {
+      const txt = document.body ? (document.body.innerText || '') : '';
+      const el = document.querySelector('.credits-count');
+      const m = ((el && el.textContent) || '').match(/(\\d{1,3}(?:[.,]\\d{3})+|\\d+)/)
+        || txt.match(/(\\d{1,3}(?:[.,]\\d{3})+|\\d+)\\s*kredit\\s*Google\\s*Flow/i)
+        || txt.match(/(\\d{1,3}(?:[.,]\\d{3})+|\\d+)\\s*Google\\s*Flow\\s*credits?/i);
+      if (m) return parseInt(m[1].replace(/[.,]/g, ''), 10);
+      return /kredit google flow anda habis|out of google flow credits/i.test(txt) ? 0 : null;
+    })()`,
+    returnByValue: true
+  }).then((r) => r?.result?.value ?? null).catch(() => null);
+
+  let credit = await read();
+  if (credit !== null) return credit;
+  const avatarPos = await cdp.findElementCenter({ selector: 'flow-header-user-icon [role="button"], flow-header-user-icon' });
+  if (!avatarPos) return null;
+  await cdp.nativeClickAt(avatarPos.x, avatarPos.y, 1200);
+  for (let i = 0; i < 6 && credit === null; i++) {
+    credit = await read();
+    if (credit === null) await sleep(700);
+  }
+  // Tutup panel akun (Escape; bila masih terbuka klik avatar lagi) agar tidak menutupi tombol lain
+  const panelOpen = () => cdp.send('Runtime.evaluate', { expression: "!!document.querySelector('.credits-count')", returnByValue: true })
+    .then((r) => Boolean(r?.result?.value)).catch(() => false);
+  await cdp.pressKey('Escape', 27).catch(() => {});
+  await sleep(500);
+  if (await panelOpen()) {
+    await cdp.nativeClickAt(avatarPos.x, avatarPos.y, 800);
+    if (await panelOpen()) {
+      await cdp.pressKey('Escape', 27).catch(() => {});
+      await sleep(500);
+    }
+  }
+  return credit;
+}
+
+async function resolveFlowProfileDir(accountId, workerId, onProgress = () => {}) {
+  const baseDir = getProfileDirForAccount(accountId);
+  // Akun tidak sedang dipakai worker lain → profil asli; dipakai bersama → salinan profil per worker
+  if ((Number(workerId) || 1) <= 1 || !isFlowAccountShared(accountId)) return baseDir;
+  const res = await syncProfileClone(baseDir, workerProfileDir(baseDir, workerId));
+  if (res.status === 'synced') onProgress(`Profil akun Flow untuk worker ${workerId} disinkronkan ✓`);
+  if (!hasUsableClone(res.dir)) {
+    throw new Error(`Profil akun Flow untuk worker ${workerId} belum siap (profil asli sedang dipakai). Jalankan ulang dengan 2 worker agar disalin di awal.`);
+  }
+  return res.dir;
 }
 
 async function getPageWebSocketUrl(port, maxRetries = 40) {
@@ -332,247 +349,12 @@ async function getPageWebSocketUrl(port, maxRetries = 40) {
           const tabs = await res.json();
           const pageTab = tabs.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
           if (pageTab) return pageTab.webSocketDebuggerUrl;
-
-          if (tabs.length === 0 || !pageTab) {
-            const newTabRes = await fetch(`http://127.0.0.1:${port}/json/new?https://flow.google.com/`).catch(() => null);
-            if (newTabRes && newTabRes.ok) {
-              const newTab = await newTabRes.json();
-              if (newTab.webSocketDebuggerUrl) return newTab.webSocketDebuggerUrl;
-            }
-          }
         }
       }
     } catch (e) {}
     await sleep(500);
   }
   return null;
-}
-
-function getFlowAccountsConfigRaw() {
-  let cfg = null;
-  if (fs.existsSync(FLOW_CONFIG_FILE)) {
-    try { cfg = JSON.parse(fs.readFileSync(FLOW_CONFIG_FILE, 'utf-8')); } catch (e) {}
-  }
-  if (!cfg || !Array.isArray(cfg.accounts) || cfg.accounts.length === 0) {
-    cfg = {
-      activeAccountId: 'acc_1',
-      accounts: [
-        { id: 'acc_1', name: 'Akun 1 (Utama)', status: 'Belum Login', credits: 'Tidak Tersedia', email: '' }
-      ]
-    };
-  }
-  return cfg;
-}
-
-function saveFlowAccountsConfig(cfg) {
-  fs.writeFileSync(FLOW_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
-}
-
-function getProfileDirForAccount(accountId) {
-  const dir = path.join(FLOW_BASE_DIR, accountId);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-function deleteFlowAccount(accountId) {
-  const cfg = getFlowAccountsConfigRaw();
-  cfg.accounts = (cfg.accounts || []).filter((a) => a.id !== accountId);
-
-  if (cfg.activeAccountId === accountId) {
-    cfg.activeAccountId = cfg.accounts[0]?.id || null;
-  }
-
-  saveFlowAccountsConfig(cfg);
-
-  const targetDir = path.join(FLOW_BASE_DIR, accountId);
-  if (fs.existsSync(targetDir)) {
-    try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch (e) {}
-  }
-
-  try {
-    const allWindows = BrowserWindow.getAllWindows();
-    allWindows.forEach((win) => {
-      if (!win.isDestroyed()) win.webContents.send('flow-accounts-updated');
-    });
-  } catch (e) {}
-
-  return { success: true, cfg };
-}
-
-async function ensureActiveAccountWithSufficientCredits(onProgress = () => {}) {
-  const cfg = getFlowAccountsConfigRaw();
-  if (!cfg.accounts || cfg.accounts.length === 0) {
-    cfg.accounts = [{ id: 'acc_1', name: 'Akun 1 (Utama)', status: 'Sesi Aktif', credits: 'Tersedia' }];
-    cfg.activeAccountId = 'acc_1';
-    saveFlowAccountsConfig(cfg);
-  }
-
-  let active = cfg.accounts.find((a) => a.id === cfg.activeAccountId) || cfg.accounts[0];
-  return active;
-}
-
-async function extractCurrentFlowCredits(cdp) {
-  try {
-    const creditVal = await cdp.send('Runtime.evaluate', {
-      expression: `
-        (() => {
-          const candidates = Array.from(document.querySelectorAll('button, span, div, p, [aria-label]')).filter(el => {
-            const txt = (el.innerText || el.getAttribute('aria-label') || '').trim();
-            return /(\\d+)\\s*(?:kredit|credits?)/i.test(txt);
-          });
-
-          for (const el of candidates) {
-            const txt = (el.innerText || el.getAttribute('aria-label') || '').trim();
-            const m = txt.match(/(\\d+)\\s*(?:kredit|credits?)/i);
-            if (m && !isNaN(Number(m[1]))) {
-              return Number(m[1]);
-            }
-          }
-          return null;
-        })()
-      `,
-      returnByValue: true
-    }).then(res => res?.result?.value).catch(() => null);
-
-    return (typeof creditVal === 'number') ? creditVal : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-function parseAllPrompts(txt) {
-  const result = { photo1: '', photo2: '', photo3: '', video: '' };
-  if (!txt || typeof txt !== 'string') txt = '';
-
-  const m1 = txt.match(/PHOTO\s*1[\s:]*([\s\S]*?)(?=PHOTO\s*2|$)/i);
-  const m2 = txt.match(/PHOTO\s*2[\s:]*([\s\S]*?)(?=PHOTO\s*3|$)/i);
-  const m3 = txt.match(/PHOTO\s*3[\s:]*([\s\S]*?)(?=VIDEO\s*PROMPT|$)/i);
-  const mv = txt.match(/VIDEO\s*PROMPT[\s:]*([\s\S]*?)(?=PANDUAN|$)/i);
-
-  if (m1 && m1[1]) result.photo1 = m1[1].replace(/[\r\n]+/g, ' ').trim();
-  if (m2 && m2[1]) result.photo2 = m2[1].replace(/[\r\n]+/g, ' ').trim();
-  if (m3 && m3[1]) result.photo3 = m3[1].replace(/[\r\n]+/g, ' ').trim();
-  if (mv && mv[1]) result.video = mv[1].replace(/[\r\n]+/g, ' ').trim();
-
-  const cleanBase = txt.replace(/[\r\n]+/g, ' ').trim() || 'Indonesian modern model wearing the outfit, raw smartphone photo, authentic skin texture with visible pores, ultra realistic 4k';
-  if (!result.photo1) result.photo1 = `${cleanBase}, candid front view pose, smiling naturally, mobile photography, 8k resolution`;
-  if (!result.photo2) result.photo2 = `${cleanBase}, dynamic side view angle, casual lifestyle movement, natural lighting, ultra detailed`;
-  if (!result.photo3) result.photo3 = `${cleanBase}, close-up detail shot showing fabric texture, authentic unedited photo, sharp focus`;
-  
-  if (!result.video) {
-    result.video = `${cleanBase}, completely static locked-off camera, tripod shot, no camera movement, no zoom, subtle natural candid movement, silent video, muted, no background audio, 4k ultra high details`;
-  } else if (!result.video.toLowerCase().includes('silent')) {
-    result.video = `${result.video}, completely static locked-off camera, no zoom, silent video, muted, no background audio`;
-  }
-
-  return result;
-}
-
-function resolveTiktokAssets(projectFolder, explicitImagePath = null) {
-  let targetFolder = projectFolder;
-  if (!targetFolder || !fs.existsSync(targetFolder)) {
-    const list = fs.readdirSync(BAHAN_VIDEO_DIR)
-      .filter((d) => d.startsWith('proyek_tiktok_') && fs.statSync(path.join(BAHAN_VIDEO_DIR, d)).isDirectory())
-      .map((d) => path.join(BAHAN_VIDEO_DIR, d));
-    list.sort((a, b) => fs.statSync(b).mtime.getTime() - fs.statSync(a).mtime.getTime());
-    targetFolder = list[0] || '';
-  }
-
-  let canvasPath = explicitImagePath && fs.existsSync(explicitImagePath) ? explicitImagePath : '';
-  let promptText = '';
-
-  if (targetFolder && fs.existsSync(targetFolder)) {
-    if (!canvasPath) {
-      const c1 = path.join(targetFolder, 'storyboard_canvas.png');
-      if (fs.existsSync(c1)) canvasPath = c1;
-    }
-
-    const p1 = path.join(targetFolder, 'prompt_video.txt');
-    if (fs.existsSync(p1)) promptText = fs.readFileSync(p1, 'utf-8');
-  }
-
-  if (!canvasPath && fs.existsSync(STORYBOARDS_DIR)) {
-    const sbFiles = fs.readdirSync(STORYBOARDS_DIR)
-      .filter((f) => /\.(png|jpe?g)$/i.test(f) && !f.includes('thumb'))
-      .map((f) => path.join(STORYBOARDS_DIR, f));
-    sbFiles.sort((a, b) => fs.statSync(b).mtime.getTime() - fs.statSync(a).mtime.getTime());
-    canvasPath = sbFiles[0] || '';
-  }
-
-  return { targetFolder, canvasPath, promptText };
-}
-
-function registerVideoToMetadata(videoFileName, sessionPath, storagePath, promptText, storyboardSourceFile) {
-  const baseName = path.basename(videoFileName, path.extname(videoFileName));
-  const timestamp = Date.now();
-
-  let thumbnailSessionPath = '';
-  let thumbnailStoragePath = '';
-
-  if (storyboardSourceFile && fs.existsSync(storyboardSourceFile)) {
-    thumbnailSessionPath = path.join(SESSIONS_VIDEOS_DIR, `${baseName}_thumb.png`);
-    thumbnailStoragePath = path.join(OUTPUT_VIDEOS_DIR, `${baseName}_thumb.png`);
-    try {
-      fs.copyFileSync(storyboardSourceFile, thumbnailSessionPath);
-      fs.copyFileSync(storyboardSourceFile, thumbnailStoragePath);
-    } catch (e) {}
-  }
-
-  const videoData = {
-    id: `vid_${timestamp}`,
-    fileName: videoFileName,
-    name: videoFileName,
-    filePath: sessionPath,
-    sessionPath: sessionPath,
-    storagePath: storagePath,
-    thumbnailPath: thumbnailSessionPath || thumbnailStoragePath || '',
-    poster: thumbnailSessionPath || thumbnailStoragePath || '',
-    previewUrl: sessionPath,
-    url: sessionPath,
-    prompt: promptText || '',
-    type: 'video',
-    platform: 'tiktok',
-    status: 'ready',
-    createdAt: new Date().toISOString(),
-    timestamp: timestamp
-  };
-
-  const targets = [
-    path.join(SESSIONS_VIDEOS_DIR, 'metadata.json'),
-    path.join(OUTPUT_VIDEOS_DIR, 'metadata.json'),
-    path.join(ROOT_DIR, 'storage', 'videos_metadata.json'),
-    path.join(ROOT_DIR, 'sessions', 'videos_metadata.json')
-  ];
-
-  targets.forEach((metaFile) => {
-    try {
-      const dir = path.dirname(metaFile);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      let list = [];
-      if (fs.existsSync(metaFile)) {
-        try {
-          list = JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
-          if (!Array.isArray(list)) list = [];
-        } catch (parseErr) {
-          list = [];
-        }
-      }
-      list.unshift(videoData);
-      fs.writeFileSync(metaFile, JSON.stringify(list, null, 2), 'utf-8');
-    } catch (e) {}
-  });
-
-  try {
-    const allWindows = BrowserWindow.getAllWindows();
-    allWindows.forEach((win) => {
-      if (!win.isDestroyed()) {
-        win.webContents.send('flow-video-saved', videoData);
-        win.webContents.send('refresh-video-gallery', videoData);
-      }
-    });
-  } catch (ipcErr) {}
-
-  return videoData;
 }
 
 function downloadFileFromUrl(url, destPath, redirectCount = 0) {
@@ -614,972 +396,1091 @@ function downloadFileFromUrl(url, destPath, redirectCount = 0) {
   });
 }
 
-async function getFirstCanvasImageTile(cdp) {
-  const res = await cdp.send('Runtime.evaluate', {
-    expression: `
-      (() => {
-        const tiles = Array.from(document.querySelectorAll('flow-canvas-tile img, flow-media-tile img, .media-strip img, [data-media-id] img, img[alt*="gambar pengguna" i]')).filter(img => {
-          const r = img.getBoundingClientRect();
-          return r.top > 60 && r.top < 650 && r.width > 35 && r.height > 35;
-        });
-
-        if (tiles.length === 0) {
-          const allImgs = Array.from(document.querySelectorAll('img')).filter(img => {
-            const r = img.getBoundingClientRect();
-            return r.top > 60 && r.top < 650 && r.width > 35 && r.height > 35 && !img.src.includes('avatar');
-          });
-          if (allImgs.length > 0) {
-            allImgs.sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left);
-            const r = allImgs[0].getBoundingClientRect();
-            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-          }
-          return null;
-        }
-
-        tiles.sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left);
-        const r = tiles[0].getBoundingClientRect();
-        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-      })()
-    `,
-    returnByValue: true
-  }).catch(() => null);
-
-  return res?.result?.value || null;
-}
-
-// FUNGSI AUTO-RECOVERY: DETEKSI ERROR AUDIO GOOGLE FLOW & NYALAKAN VIDEO SENYAP
-async function handleAudioFailureAndEnableSilentVideo(cdp, onProgress) {
-  try {
-    const errorDetected = await cdp.send('Runtime.evaluate', {
-      expression: `
-        (() => {
-          const errEls = Array.from(document.querySelectorAll('.error-message, .error-title, span')).filter(el => {
-            const txt = (el.innerText || el.textContent || '').trim();
-            return txt.includes('Pembuatan audio gagal') || txt.includes('audio gagal');
-          });
-          return errEls.length > 0;
-        })()
-      `,
-      returnByValue: true
-    }).then(res => res?.result?.value).catch(() => false);
-
-    if (errorDetected) {
-      onProgress('[AUTO-RECOVERY] Terdeteksi kendala audio Google Flow. Memperbaiki setelan...');
-
-      // 1. Klik tombol Setelan (settings_2)
-      const settingsPos = await cdp.findElementCenter({
-        selector: 'button, [role="button"]',
-        textRegexStr: 'setelan|settings',
-        minY: 50,
-        maxY: 750
-      });
-
-      if (settingsPos) {
-        await cdp.nativeClickAt(settingsPos.x, settingsPos.y, 1000);
-      } else {
-        const fallbackSettings = await cdp.findElementCenter({
-          selector: 'button:has(mat-icon), button',
-          minY: 50,
-          maxY: 750,
-          pickLast: true
-        });
-        if (fallbackSettings) await cdp.nativeClickAt(fallbackSettings.x, fallbackSettings.y, 1000);
-      }
-
-      await sleep(1000);
-
-      // 2. Nyalakan Toggle "Tampilkan video senyap"
-      const togglePos = await cdp.send('Runtime.evaluate', {
-        expression: `
-          (() => {
-            const toggles = Array.from(document.querySelectorAll('button[role="switch"], mat-slide-toggle, .mdc-switch')).filter(el => {
-              const isChecked = el.getAttribute('aria-checked') === 'true' || el.classList.contains('mdc-switch--checked');
-              return !isChecked;
-            });
-            if (toggles.length === 0) return null;
-            const r = toggles[0].getBoundingClientRect();
-            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-          })()
-        `,
-        returnByValue: true
-      }).then(res => res?.result?.value).catch(() => null);
-
-      if (togglePos) {
-        onProgress('[AUTO-RECOVERY] Mengaktifkan tombol "Tampilkan video senyap"...');
-        await cdp.nativeClickAt(togglePos.x, togglePos.y, 800);
-      }
-
-      await sleep(800);
-      await cdp.pressKey('Escape', 27);
-      await sleep(800);
-
-      // 3. Klik Tombol "Coba lagi" (Refresh)
-      onProgress('[AUTO-RECOVERY] Menekan tombol "Coba lagi" (refresh)...');
-      const retryPos = await cdp.findElementCenter({
-        selector: 'button, [role="button"]',
-        textRegexStr: 'refresh|coba lagi|retry',
-        minY: 60,
-        maxY: 780
-      });
-
-      if (retryPos) {
-        await cdp.nativeClickAt(retryPos.x, retryPos.y, 1500);
-        return true;
-      }
-    }
-  } catch (e) {}
-  return false;
-}
-
-// 2. UNDUH GAMBAR UKURAN ASLI / 1K (CEPAT, TANPA JEDA UPSCALING & ANTI-CORS)
-async function downloadAndSaveFlowImage2K(cdp, tempDownloadDir, photoIndex, promptText, onProgress) {
-  const timestamp = Date.now();
-  const fileName = `img_candid_${photoIndex}_${timestamp}.png`;
-  const sessionImgPath = path.resolve(ROOT_DIR, 'sessions/generated_images', fileName);
-  const storageImgPath = path.resolve(ROOT_DIR, 'storage/images', fileName);
-
-  [path.dirname(sessionImgPath), path.dirname(storageImgPath)].forEach((d) => {
-    if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+// Unduh URL video memakai cookie login Google dari Chrome bot (tanpa cookie, URL Flow hanya memberi
+// halaman error / potongan stream). Parameter "range" dibuang agar yang diminta file utuh.
+async function downloadVideoViaSession(cdp, url, destPath) {
+  const fullUrl = url.replace(/([?&])range=[^&]*&?/i, '$1').replace(/[?&]$/, '');
+  const cookieRes = await cdp.send('Network.getCookies', { urls: [fullUrl] }).catch(() => null);
+  const cookie = (cookieRes?.cookies || []).map((c) => `${c.name}=${c.value}`).join('; ');
+  const res = await fetch(fullUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+      'Referer': 'https://labs.google/',
+      ...(cookie ? { Cookie: cookie } : {})
+    },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(180000)
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const type = res.headers.get('content-type') || '';
+  if (/text\/html|json/i.test(type)) throw new Error(`bukan file video (${type})`);
+  fs.writeFileSync(destPath, Buffer.from(await res.arrayBuffer()));
+}
 
-  onProgress(`[DOWNLOAD 1K] Membuka kartu gambar candid ${photoIndex} terbaru...`);
-
-  const latestTilePos = await cdp.send('Runtime.evaluate', {
-    expression: `
-      (() => {
-        const tiles = Array.from(document.querySelectorAll('flow-canvas-tile img, flow-media-tile img, .media-strip img, [data-media-id] img, img[alt*="gambar pengguna" i]')).filter(img => {
-          const r = img.getBoundingClientRect();
-          return r.top > 60 && r.top < 650 && r.width > 40 && r.height > 40 && !img.src.includes('avatar');
-        });
-
-        if (tiles.length === 0) return null;
-
-        tiles.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
-        const target = tiles[0];
-        target.scrollIntoView({ behavior: 'instant', block: 'center' });
-        const r = target.getBoundingClientRect();
-        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-      })()
-    `,
-    returnByValue: true
-  }).then(res => res?.result?.value).catch(() => null);
-
-  if (latestTilePos) {
-    await cdp.nativeClickAt(latestTilePos.x, latestTilePos.y, 1500);
-  } else {
-    const fallbackPos = await cdp.waitForElementCenter({
-      selector: 'flow-canvas-tile img, flow-media-tile img, .media-strip img',
-      pickLast: false,
-      minY: 70,
-      maxY: 650
-    }, 4000);
-    if (fallbackPos) await cdp.nativeClickAt(fallbackPos.x, fallbackPos.y, 1500);
-  }
-
-  if (fs.existsSync(tempDownloadDir)) {
-    fs.readdirSync(tempDownloadDir).forEach((f) => {
-      try { fs.unlinkSync(path.join(tempDownloadDir, f)); } catch (e) {}
-    });
-  }
-
-  let isDownloaded = false;
-
-  onProgress(`[DOWNLOAD 1K] Mengambil URL biner gambar asli dari CDN Flow...`);
-  const imgSrcUrl = await cdp.send('Runtime.evaluate', {
-    expression: `
-      (() => {
-        const imgs = Array.from(document.querySelectorAll('img')).filter(i => {
-          const r = i.getBoundingClientRect();
-          return r.width > 200 && r.height > 200 && !i.src.includes('avatar');
-        });
-        if (imgs.length === 0) return null;
-        imgs.sort((a, b) => (b.naturalWidth * b.naturalHeight) - (a.naturalWidth * a.naturalHeight));
-        return imgs[0].currentSrc || imgs[0].src || null;
-      })()
-    `,
-    returnByValue: true
-  }).then(res => res?.result?.value).catch(() => null);
-
-  if (imgSrcUrl && imgSrcUrl.startsWith('http')) {
-    try {
-      await downloadFileFromUrl(imgSrcUrl, sessionImgPath);
-      if (fs.existsSync(sessionImgPath) && fs.statSync(sessionImgPath).size > 15000) {
-        fs.copyFileSync(sessionImgPath, storageImgPath);
-        isDownloaded = true;
-      }
-    } catch (e) {}
-  }
-
-  if (!isDownloaded) {
-    onProgress(`[DOWNLOAD 1K] Mengklik menu unduh peramban...`);
-    const dlBtnPos = await cdp.waitForElementCenter({
-      selector: 'button[aria-label*="Unduh" i], button[aria-label*="Download" i], button, [role="button"]',
-      textRegexStr: '^\\s*(Unduh|Download)\\s*$',
-      maxY: 680,
-      pickLast: true
-    }, 4000);
-
-    if (dlBtnPos) {
-      await cdp.nativeClickAt(dlBtnPos.x, dlBtnPos.y, 800);
-
-      const optionOriginalPos = await cdp.waitForElementCenter({
-        selector: '.mat-mdc-menu-panel button, [role="menuitem"], flow-menu-item, span, div',
-        textRegexStr: 'Asli|Original|Standar|1K|Default'
-      }, 3000);
-
-      if (optionOriginalPos) {
-        await cdp.nativeClickAt(optionOriginalPos.x, optionOriginalPos.y, 1000);
-      }
-
-      for (let w = 0; w < 10; w++) {
-        await sleep(600);
-        if (fs.existsSync(tempDownloadDir)) {
-          const files = fs.readdirSync(tempDownloadDir).filter((f) => !f.endsWith('.crdownload') && !f.endsWith('.tmp'));
-          if (files.length > 0) {
-            const downloadedPath = path.join(tempDownloadDir, files[0]);
-            const stats = fs.statSync(downloadedPath);
-            if (stats.size > 15000) {
-              fs.copyFileSync(downloadedPath, sessionImgPath);
-              fs.copyFileSync(downloadedPath, storageImgPath);
-              try { fs.unlinkSync(downloadedPath); } catch (e) {}
-              isDownloaded = true;
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if (!isDownloaded) {
-    const imgRect = await cdp.send('Runtime.evaluate', {
-      expression: `
-        (() => {
-          const imgs = Array.from(document.querySelectorAll('img')).filter(i => {
-            const r = i.getBoundingClientRect();
-            return r.width > 200 && r.height > 200 && !i.src.includes('avatar');
-          });
-          if (imgs.length === 0) return null;
-          imgs.sort((a, b) => (b.getBoundingClientRect().width * b.getBoundingClientRect().height) - (a.getBoundingClientRect().width * a.getBoundingClientRect().height));
-          const r = imgs[0].getBoundingClientRect();
-          return {
-            x: Math.round(r.left),
-            y: Math.round(r.top),
-            width: Math.round(r.width),
-            height: Math.round(r.height)
-          };
-        })()
-      `,
-      returnByValue: true
-    }).then(res => res?.result?.value).catch(() => null);
-
-    if (imgRect && imgRect.width > 80 && imgRect.height > 80) {
-      const shotData = await cdp.send('Page.captureScreenshot', {
-        format: 'png',
-        clip: {
-          x: imgRect.x,
-          y: imgRect.y,
-          width: imgRect.width,
-          height: imgRect.height,
-          scale: 1
-        }
-      }).catch(() => null);
-
-      if (shotData?.data) {
-        const buffer = Buffer.from(shotData.data, 'base64');
-        if (buffer.length > 15000) {
-          fs.writeFileSync(sessionImgPath, buffer);
-          fs.writeFileSync(storageImgPath, buffer);
-          isDownloaded = true;
-        }
-      }
-    }
-  }
-
-  if (!isDownloaded || !fs.existsSync(sessionImgPath) || fs.statSync(sessionImgPath).size < 10000) {
-    throw new Error(`[VERIFIKASI GAGAL] Foto candid ${photoIndex} belum berhasil disimpan ke penyimpanan lokal!`);
-  }
-
-  const metaItem = {
-    id: `img_${timestamp}`,
-    fileName: fileName,
-    filePath: sessionImgPath,
-    storagePath: storageImgPath,
-    prompt: promptText || '',
-    aspectRatio: '9:16',
-    createdAt: new Date().toISOString(),
-    timestamp: timestamp
-  };
-
-  const metaFiles = [
-    path.resolve(ROOT_DIR, 'sessions/generated_images/metadata.json'),
-    path.resolve(ROOT_DIR, 'storage/images/metadata.json')
+function buildFull5ScenesPrompt(rawTxt) {
+  const defaultScenes = [
+    'Scene 1: Static camera. The woman gently lifts her hair while checking the mirror. Silent video, no audio.',
+    'Scene 2: Static camera. The woman smooths the fabric at her waist while looking at the side mirror. Mute, no sound.',
+    'Scene 3: Static camera. The woman sways slightly and lifts the hem of the dress. Silent video, no audio.',
+    'Scene 4: Static camera. The woman smiles at her reflection, then begins turning toward the front. Mute, no sound.',
+    'Scene 5: Static camera. The woman smiles warmly at the camera and sways the dress hem gently. Silent video, no audio.'
   ];
 
-  metaFiles.forEach((mf) => {
-    try {
-      let list = [];
-      if (fs.existsSync(mf)) {
-        try { list = JSON.parse(fs.readFileSync(mf, 'utf-8')); } catch (e) {}
-      }
-      if (!Array.isArray(list)) list = [];
-      list.unshift(metaItem);
-      fs.writeFileSync(mf, JSON.stringify(list, null, 2), 'utf-8');
-    } catch (e) {}
-  });
-
-  try {
-    BrowserWindow.getAllWindows().forEach((win) => {
-      if (!win.isDestroyed()) {
-        win.webContents.send('refresh-images-gallery', metaItem);
-        win.webContents.send('refresh-image-storage', metaItem);
-      }
-    });
-  } catch (e) {}
-
-  const finalSizeKb = Math.round(fs.statSync(sessionImgPath).size / 1024);
-  onProgress(`[TERVERIFIKASI] Foto candid ${photoIndex} berhasil disimpan (${finalSizeKb} KB) dan terdaftar di Galeri Gambar!`);
-
-  const closeBtnPos = await cdp.findElementCenter({
-    selector: 'button, [role="button"], span',
-    textRegexStr: '^\\s*(Selesai|Tutup|Close)\\s*$',
-    minY: 10,
-    maxY: 120
-  });
-
-  if (closeBtnPos) {
-    await cdp.nativeClickAt(closeBtnPos.x, closeBtnPos.y, 600);
-  } else {
-    await cdp.pressKey('Escape', 27);
-  }
-  await sleep(800);
-}
-
-async function submitPromptAndGenerate(cdp, promptStr, onProgress, stepName) {
-  onProgress(`[${stepName}] Menempelkan teks prompt...`);
-  clipboard.writeText(promptStr);
-  await sleep(200);
-
-  const editorPos = await cdp.waitForElementCenter({
-    selector: 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]'
-  }, 10000);
-  if (!editorPos) throw new Error('Kotak input prompt tidak ditemukan.');
-
-  await cdp.nativeClickAt(editorPos.x, editorPos.y, 350);
-  await cdp.sendCtrlV();
-  await humanDelay(800, 1200);
-
-  onProgress(`[${stepName}] Menekan tombol Generate...`);
-  const genBtnPos = await cdp.findElementCenter({
-    selector: 'button[aria-label="Mulai pembuatan"], button.generate-icon-button, button',
-    textRegexStr: 'arrow_forward|Mulai pembuatan',
-    pickLast: true
-  });
-
-  if (genBtnPos) {
-    await cdp.nativeClickAt(genBtnPos.x, genBtnPos.y, 1000);
-  } else {
-    await cdp.pressKey('Enter', 13);
+  if (!rawTxt || typeof rawTxt !== 'string' || rawTxt.trim().length < 30) {
+    return defaultScenes.join(' ');
   }
 
-  onProgress(`[${stepName}] Sedang diproses oleh Google Flow...`);
-  await sleep(7000);
-
-  const startWait = Date.now();
-  while (Date.now() - startWait < 180000) {
-    // Periksa apakah terjadi error audio, jika ya lakukan auto-recovery otomatis
-    await handleAudioFailureAndEnableSilentVideo(cdp, onProgress);
-
-    const isSpinning = await cdp.findElementCenter({
-      selector: '.loading-percentage, mat-progress-spinner, flow-soupy-overlay'
-    });
-    if (!isSpinning) break;
-    await sleep(2500);
+  const sceneMatches = [];
+  const regex = /(?:Scene\s*(\d)|SCENE\s*(\d))[\s:—–-]*([^\n\r]+)/gi;
+  let match;
+  while ((match = regex.exec(rawTxt)) !== null) {
+    const sceneNum = match[1] || match[2];
+    const desc = match[3].replace(/^[^\w]+/, '').trim();
+    if (desc.length > 8) {
+      sceneMatches.push(`Scene ${sceneNum}: ${desc}`);
+    }
   }
 
-  onProgress(`[${stepName}] Selesai!`);
-  await sleep(2000);
+  if (sceneMatches.length >= 3) {
+    let combined = sceneMatches.join('. ');
+    if (!combined.toLowerCase().includes('silent') && !combined.toLowerCase().includes('mute')) {
+      combined += '. Static camera, locked shot, silent video, no audio, ultra photorealistic.';
+    }
+    return combined;
+  }
+
+  return rawTxt.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 // =========================================================================
-// PIPELINE UTAMA FLOW TIKTOK
+// HELPER ROTASI & VALIDASI SALDO MULTI-AKUN FLOW
 // =========================================================================
-async function runFlowProjectCreationTiktok({
+function resolveActiveAccountForRender(onProgress = () => {}, requiredCredit = MIN_FLOW_CREDIT, busyIds = new Set()) {
+  const cfg = getFlowAccountsConfigRaw();
+  if (!cfg || !Array.isArray(cfg.accounts) || cfg.accounts.length === 0) {
+    throw new Error('Tidak ada akun Google Flow yang terdaftar di sistem.');
+  }
+
+  const getCreditNum = (acc) => {
+    if (!acc || acc.status !== 'Sesi Aktif') return 0;
+    const match = String(acc.credits || '').replace(/(\d)[.,](?=\d{3}(?!\d))/g, '$1').match(/\d+/);
+    return match ? parseInt(match[0], 10) : 0;
+  };
+  // Akun yang baru ditandai Flow (spam/aktivitas tidak biasa) diistirahatkan dulu
+  const hasCredit = (acc) => Boolean(acc) && acc.status === 'Sesi Aktif' && getCreditNum(acc) >= requiredCredit && isFlowAccountRested(acc);
+
+  let activeIndex = cfg.accounts.findIndex((a) => a.id === cfg.activeAccountId);
+  if (activeIndex === -1) activeIndex = 0;
+
+  const currentAcc = cfg.accounts[activeIndex];
+  const currentCredit = getCreditNum(currentAcc);
+
+  // Rotasi acak tiap render (hindari akun yang baru dipakai & akun yang sedang dipakai worker lain)
+  // agar satu akun tidak membuat video beruntun → mengurangi deteksi spam Flow
+  const picked = pickRandomFlowAccount(cfg.accounts, hasCredit, busyIds, cfg.lastFlowAccountId);
+  if (picked) {
+    onProgress(`[Rotasi Acak] Memakai ${picked.name} (${picked.credits})${busyIds.has(picked.id) ? ' bersama worker lain' : ''}.`);
+    cfg.activeAccountId = picked.id;
+    cfg.lastFlowAccountId = picked.id;
+    saveFlowAccountsConfig(cfg);
+    return { targetAcc: picked, cfg };
+  }
+
+  const pendingLoginAcc = cfg.accounts.find((acc) => acc.id !== currentAcc?.id && acc.status !== 'Sesi Aktif');
+  if (pendingLoginAcc) {
+    throw new Error(`Kredit ${currentAcc ? currentAcc.name : 'Akun Utama'} tersisa < ${requiredCredit} (${currentCredit} Kredit) dan ${pendingLoginAcc.name} belum login. Anda tidak bisa membuat video reels sebelum login ke ${pendingLoginAcc.name} di Pengaturan AI.`);
+  }
+
+  throw new Error(`Semua akun Google Flow kehabisan kredit (< ${requiredCredit}). Anda tidak dapat membuat video reels sampai kuota harian direset besok atau menambahkan akun baru.`);
+}
+
+// Pipeline Utama Render TikTok di Google Flow (Dengan Dukungan Toggle Headless)
+async function runFlowProjectCreationTiktokDaster({
+  workerId = 1,
   projectFolder = null,
   storyboardImagePath = null,
   promptText = null,
   flowRatio = '9:16',
   flowModel = 'Veo 3.1 - Lite',
   flowResolution = '720p',
-  flowDuration = '8 Detik',
+  flowDuration = '10 Detik',
+  flowOutputCount = '1',
+  headless = null,
   onProgress = () => {}
 }) {
   const chromePath = getOriginalChromeExecutablePath();
   if (!chromePath) return { success: false, error: 'Google Chrome tidak ditemukan.' };
 
-  const { targetFolder, canvasPath, promptText: filePromptText } = resolveTiktokAssets(projectFolder, storyboardImagePath);
-  if (!canvasPath || !fs.existsSync(canvasPath)) {
-    return { success: false, error: 'Berkas kanvas referensi TikTok tidak ditemukan.' };
-  }
-
-  const rawPrompts = promptText && promptText.length > 50 ? promptText : filePromptText;
-  const parsedPrompts = parseAllPrompts(rawPrompts);
-
   await acquireGenerateSlot(onProgress);
 
-  const MINIMUM_REQUIRED_CREDITS = 12;
-  let targetAcc = await ensureActiveAccountWithSufficientCredits(onProgress);
-  let chromeProcess = null;
-  let cdp = null;
+  // Ambil setelan headless dari config jika parameter kosong/null
+  const cfgRaw = getFlowAccountsConfigRaw();
+  const effectiveHeadless = typeof headless === 'boolean' 
+    ? headless 
+    : (typeof cfgRaw?.headless === 'boolean' ? cfgRaw.headless : false);
 
-  const tempDownloadDir = path.resolve(ROOT_DIR, 'temp/flow_dl_tt_' + Date.now());
-  if (!fs.existsSync(tempDownloadDir)) fs.mkdirSync(tempDownloadDir, { recursive: true });
+  let targetAcc = null;
+  let cfg = null;
+  const costKey = buildFlowCostKey({ flowModel, flowResolution, flowDuration, flowOutputCount });
+  let actualFlowCost = null;
+  try {
+    const knownCost = getCachedFlowCost(costKey);
+    if (knownCost !== null) onProgress(`Biaya Flow untuk setelan ini (dari render sebelumnya): ${knownCost} kredit.`);
+    const resolved = await leaseFlowAccount((busy) => resolveActiveAccountForRender(onProgress, knownCost || 1, busy), onProgress);
+    targetAcc = resolved.targetAcc;
+    cfg = resolved.cfg;
+  } catch (accErr) {
+    await releaseGenerateSlot(onProgress);
+    return { success: false, error: accErr.message };
+  }
+
+  let profileDir;
+  try {
+    profileDir = await resolveFlowProfileDir(targetAcc.id, workerId, onProgress);
+  } catch (profileErr) {
+    await releaseGenerateSlot(onProgress);
+    return { success: false, error: profileErr.message };
+  }
+  purgeTransientSessionData(profileDir);
+
+  const cdpPort = 51000 + Math.floor(Math.random() * 13000);
+  onProgress(`Membuka sesi Google Flow TikTok (${targetAcc.name} · Port CDP: ${cdpPort} · Headless: ${effectiveHeadless ? 'Aktif' : 'Nonaktif'})...`);
+
+  const chromeArgs = [
+    `--remote-debugging-port=${cdpPort}`,
+    `--user-data-dir=${profileDir}`,
+    '--remote-allow-origins=*',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--hide-crash-restore-bubble',
+    '--window-size=1280,900',
+    '--disable-blink-features=AutomationControlled',
+    '--mute-audio',
+    '--lang=id-ID'
+  ];
+
+  if (effectiveHeadless) {
+    // Mode senyap: Chrome asli dengan jendela di luar layar (--headless sering dijeda/dicurigai Google Flow)
+    chromeArgs.push(
+      '--window-position=-32000,-32000',
+      '--disable-features=CalculateNativeWinOcclusion',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling'
+    );
+  } else {
+    chromeArgs.push('--window-position=40,30');
+  }
+
+  chromeArgs.push('https://flow.google.com/');
+
+  const chromeProcess = spawn(chromePath, [...chromeArgs, ...chromeLiteArgs()], { detached: false, stdio: 'ignore' });
+
+  const wsUrl = await getPageWebSocketUrl(cdpPort, 40);
+  if (!wsUrl) {
+    if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
+    await releaseGenerateSlot(onProgress);
+    return { success: false, error: 'Gagal terhubung ke WebSocket Google Flow.' };
+  }
+
+  const cdp = new RawCDPClient(wsUrl);
+  await cdp.connect();
+  await cdp.send('Page.enable');
+  await cdp.send('DOM.enable');
+  await cdp.send('Network.enable');
+
+  const interceptedVideoUrls = [];
+  cdp.on('Network.responseReceived', (params) => {
+    const respUrl = params.response?.url || '';
+    const mimeType = (params.response?.mimeType || '').toLowerCase();
+    if (
+      respUrl.startsWith('http') &&
+      !respUrl.includes('.js') &&
+      (mimeType.includes('video/') ||
+        respUrl.includes('googlevideo.com/videoplayback') ||
+        respUrl.includes('.mp4') ||
+        (respUrl.includes('googleusercontent.com') && mimeType.includes('octet-stream')))
+    ) {
+      if (!interceptedVideoUrls.includes(respUrl)) interceptedVideoUrls.unshift(respUrl);
+    }
+  });
 
   try {
-    let accountsChecked = 0;
-    const maxAccountsToTry = 5;
+    onProgress('Menunggu dashboard Google Flow siap...');
+    await sleep(3500);
 
-    while (accountsChecked < maxAccountsToTry) {
-      accountsChecked++;
-      const profileDir = getProfileDirForAccount(targetAcc?.id || 'acc_1');
-      purgeTransientSessionData(profileDir);
+    await dismissFlowOnboarding((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
 
-      const cdpPort = 51000 + Math.floor(Math.random() * 13000);
-      onProgress(`Membuka sesi Google Flow (${targetAcc.name} · Port CDP: ${cdpPort})...`);
-      chromeProcess = spawn(chromePath, getFlowChromeArgs(cdpPort, profileDir), { detached: false, stdio: 'ignore' });
+    onProgress('Membuat Project Baru Google Flow...');
+    // Editor project terbuka = kotak prompt Flow tampil. Bila tombol "Project baru" tidak muncul / klik tidak membuka
+    // editor (halaman lambat, popup, dua worker membuka akun yang sama bersamaan) → muat ulang Flow & ulangi.
+    const EDITOR_SELECTOR = 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]';
+    let projectOpened = false;
+    for (let attempt = 1; attempt <= 3 && !projectOpened; attempt++) {
+      if (attempt > 1) {
+        onProgress(`Editor project Flow belum terbuka → memuat ulang Google Flow (${attempt}/3)...`);
+        await cdp.send('Page.navigate', { url: 'https://flow.google.com/' }).catch(() => {});
+        await sleep(6000);
+        await dismissFlowOnboarding((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
+      }
+      const newProjPos = await cdp.waitForElementCenter({
+        selector: 'button, a, [role="button"], span',
+        textRegexStr: '^\\s*(\\+\\s*)?(Project baru|New project|Buat project)\\s*$'
+      }, 20000);
+      if (!newProjPos) {
+        onProgress('[Peringatan] Tombol "Project baru" tidak ditemukan di dashboard Flow.');
+        continue;
+      }
+      await cdp.nativeClickAt(newProjPos.x, newProjPos.y, 3500);
+      const evalPage = (expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value).catch(() => null);
+      // Klik koordinat bisa terhalang banner/overlay baru → bila belum masuk project, klik tombolnya langsung lewat DOM
+      if (!(await evalPage("location.pathname.includes('/project/')"))) {
+        onProgress('Klik "Project baru" terhalang → mengklik tombol langsung...');
+        await evalPage(`(() => {
+          const el = Array.from(document.querySelectorAll('button, a, [role="button"], span'))
+            .find((e) => /^\\s*(\\+\\s*)?(Project baru|New project|Buat project)\\s*$/i.test((e.innerText || '').trim()));
+          const target = el ? (el.closest('button, a, [role="button"]') || el) : null;
+          if (target) target.click();
+          return Boolean(target);
+        })()`);
+        await sleep(3500);
+      }
+      await dismissFlowOnboarding(evalPage, onProgress, sleep);
+      projectOpened = Boolean(await cdp.waitForElementCenter({ selector: EDITOR_SELECTOR }, 20000));
+      if (!projectOpened && (await evalPage(`location.pathname.includes('/project/') && !!document.querySelector('${EDITOR_SELECTOR}')`))) {
+        // Editor sudah ada tapi masih tertutup popup (mis. "Easier asset management… Mulai") → tutup popup lalu lanjut
+        await dismissFlowOnboarding(evalPage, onProgress, sleep);
+        projectOpened = true;
+      }
+    }
+    if (!projectOpened) {
+      // Simpan bukti agar penyebabnya terlihat (screenshot + cuplikan teks halaman)
+      const shotPath = path.join(os.tmpdir(), `flow_noproject_${Date.now()}.png`);
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' }).catch(() => null);
+      if (shot?.data) fs.writeFileSync(shotPath, Buffer.from(shot.data, 'base64'));
+      const pageInfo = await cdp.send('Runtime.evaluate', {
+        expression: `location.href + ' | ' + (document.body?.innerText || '').replace(/\\s+/g, ' ').slice(0, 200)`,
+        returnByValue: true
+      }).then((r) => r?.result?.value || '').catch(() => '');
+      throw new Error(`Editor project Google Flow tidak terbuka setelah 3x percobaan. Halaman: ${pageInfo} · Screenshot: ${shotPath}`);
+    }
+    // Popup info fitur baru di project (mis. "Nano Banana 2.1" → Mulai)
+    await dismissFlowOnboarding((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
+    await disableFlowAgent((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
 
-      const wsUrl = await getPageWebSocketUrl(cdpPort, 40);
-      if (!wsUrl) throw new Error(`Gagal mendapatkan WebSocket CDP pada port ${cdpPort}.`);
+    const cleanOutput = String(flowOutputCount).match(/\d+/) ? `x${String(flowOutputCount).match(/\d+/)[0]}` : 'x1';
+    const cleanModel = String(flowModel || 'Veo 3.1 - Lite').replace(/google/i, '').trim();
+    const cleanRes = String(flowResolution).includes('360') ? '360p' : '720p';
+    const durMatch = String(flowDuration).match(/\d+/);
+    const cleanDurationVal = durMatch ? durMatch[0] : '8';
 
-      cdp = new RawCDPClient(wsUrl);
-      await cdp.connect();
-      await cdp.send('Page.enable');
-      await cdp.send('DOM.enable');
-      await cdp.send('Network.enable');
+    onProgress(`Mengatur setelan mesin render (${cleanModel} · ${cleanRes} · ${cleanDurationVal} dtk · ${cleanOutput})...`);
 
-      await cdp.send('Browser.setDownloadBehavior', {
-        behavior: 'allow',
-        downloadPath: tempDownloadDir,
-        eventsEnabled: true
-      }).catch(() => {});
+    // =====================================================================
+    // SETELAN MESIN RENDER: cek & atur satu per satu sesuai pilihan aplikasi
+    // Struktur Flow: <flow-prompt-box-settings> berisi <flow-toggles aria-label="Mode|Jenis video|Rasio aspek|Jumlah output">
+    // dan <button aria-label="Pilih rangkaian model">. Resolusi & durasi hanya muncul untuk model tertentu.
+    // =====================================================================
+    const evalFlow = async (expression) => {
+      const r = await cdp.send('Runtime.evaluate', { expression, returnByValue: true }).catch(() => null);
+      return r?.result?.value;
+    };
 
-      onProgress(`Memeriksa saldo kredit ${targetAcc.name}...`);
-      await sleep(4000);
+    const isSettingsOpen = async () => Boolean(await evalFlow(`!!document.querySelector('flow-prompt-box-settings')`));
 
-      const currentCredits = await extractCurrentFlowCredits(cdp);
+    const openSettingsPanel = async () => {
+      if (await isSettingsOpen()) return true;
+      const pillPos = await cdp.waitForElementCenter({
+        selector: 'button[aria-label="Pemicu setelan"], button.settings-trigger-button, button',
+        textRegexStr: 'Nano Banana|Imagen|Veo|Omni|Video|Gambar|x[1-4]|dtk',
+        minY: 480,
+        pickLast: true
+      }, 10000);
+      if (pillPos) await cdp.nativeClickAt(pillPos.x, pillPos.y, 750);
+      for (let i = 0; i < 10; i++) {
+        if (await isSettingsOpen()) return true;
+        await sleep(300);
+      }
+      return false;
+    };
 
-      if (currentCredits !== null) {
-        onProgress(`Saldo ${targetAcc.name}: ${currentCredits} Kredit.`);
-
-        const cfg = getFlowAccountsConfigRaw();
-        const accInCfg = (cfg.accounts || []).find((a) => a.id === targetAcc.id);
-        if (accInCfg) {
-          accInCfg.credits = `${currentCredits} Kredit`;
-          saveFlowAccountsConfig(cfg);
-          try {
-            BrowserWindow.getAllWindows().forEach((win) => {
-              if (!win.isDestroyed()) win.webContents.send('flow-accounts-updated', cfg);
-            });
-          } catch (e) {}
-        }
-
-        if (currentCredits < MINIMUM_REQUIRED_CREDITS) {
-          onProgress(`[PERINGATAN] Kredit ${targetAcc.name} tersisa ${currentCredits} (< ${MINIMUM_REQUIRED_CREDITS}). Beralih ke akun berikutnya...`);
-
-          try { await cdp.send('Browser.close'); } catch (e) {}
-          cdp.close();
-          if (chromeProcess && !chromeProcess.killed) try { chromeProcess.kill(); } catch (e) {}
-          await sleep(1500);
-
-          const allAccounts = cfg.accounts || [];
-          const currentIndex = allAccounts.findIndex((a) => a.id === targetAcc.id);
-          const nextAcc = allAccounts[(currentIndex + 1) % allAccounts.length];
-
-          if (!nextAcc || nextAcc.id === targetAcc.id) {
-            throw new Error(`Semua akun Google Flow memiliki kredit kurang dari ${MINIMUM_REQUIRED_CREDITS}. Silakan tambahkan akun baru di Pengaturan AI.`);
-          }
-
-          cfg.activeAccountId = nextAcc.id;
-          saveFlowAccountsConfig(cfg);
-          targetAcc = nextAcc;
-          continue;
-        }
+    // Pilih tombol pada <flow-toggles aria-label="..."> berdasarkan teks .toggle-text, lalu verifikasi aria-checked
+    const selectFlowToggle = async (groupLabels, optionRegexStr, displayName, optional = false) => {
+      if (!(await openSettingsPanel())) {
+        onProgress(`[Peringatan] Panel setelan Flow tidak terbuka, ${displayName} dilewati.`);
+        return false;
       }
 
-      break;
-    }
+      const inspect = (doClick) => `
+        (() => {
+          const labels = ${JSON.stringify(groupLabels.map((l) => l.toLowerCase()))};
+          const re = new RegExp(${JSON.stringify(optionRegexStr)}, 'i');
+          const panel = document.querySelector('flow-prompt-box-settings');
+          if (!panel) return { state: 'no_panel' };
+          const group = Array.from(panel.querySelectorAll('flow-toggles'))
+            .find(el => { const a = (el.getAttribute('aria-label') || '').toLowerCase().trim(); return labels.some(l => a === l || a.startsWith(l + ' ')); });
+          const btns = Array.from((group || panel).querySelectorAll('button[role="radio"]'));
+          const textOf = (b) => ((b.querySelector('.toggle-text') || b).textContent || '').trim();
+          const btn = btns.find(b => re.test(textOf(b)));
+          if (!btn) return { state: 'not_found', hasGroup: Boolean(group), options: btns.map(textOf).join(' | ') };
+          if (btn.getAttribute('aria-checked') === 'true') return { state: 'checked', text: textOf(btn) };
+          if (${doClick}) btn.click();
+          const r = btn.getBoundingClientRect();
+          return { state: 'unchecked', text: textOf(btn), x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        })()
+      `;
 
-    const interceptedVideoUrls = [];
-    cdp.on('Network.responseReceived', (params) => {
-      const respUrl = params.response?.url || '';
-      const mimeType = (params.response?.mimeType || '').toLowerCase();
-      if (
-        respUrl.startsWith('http') &&
-        !respUrl.includes('.js') &&
-        (mimeType.includes('video/') ||
-          respUrl.includes('googlevideo.com/videoplayback') ||
-          respUrl.includes('.mp4') ||
-          (respUrl.includes('googleusercontent.com') && mimeType.includes('octet-stream')))
-      ) {
-        if (!interceptedVideoUrls.includes(respUrl)) interceptedVideoUrls.unshift(respUrl);
+      let res = await evalFlow(inspect(false));
+      if (res?.state === 'checked') {
+        onProgress(`✓ ${displayName}: ${res.text} (sudah sesuai)`);
+        return true;
       }
-    });
+      if (res?.state === 'not_found') {
+        if (optional && !res.hasGroup) {
+          onProgress(`• ${displayName}: tidak tersedia untuk model ini, dilewati.`);
+        } else {
+          onProgress(`[Peringatan] ${displayName}: opsi tidak ditemukan (tersedia: ${res.options || '-'}).`);
+        }
+        return false;
+      }
+      if (res?.state !== 'unchecked') return false;
 
-    onProgress('Menunggu halaman Google Flow siap...');
-    await sleep(2500);
+      // Klik native dulu (paling mirip pengguna), lalu fallback klik DOM
+      await cdp.nativeClickAt(res.x, res.y, 450);
+      res = await evalFlow(inspect(false));
+      if (res?.state === 'unchecked') {
+        res = await evalFlow(inspect(true));
+        await sleep(400);
+        res = await evalFlow(inspect(false));
+      }
 
-    onProgress(`Membuat Project Baru di Google Flow menggunakan ${targetAcc.name}...`);
-    const newProjPos = await cdp.waitForElementCenter({
-      selector: 'button, a, [role="button"], span',
-      textRegexStr: '^\\s*(\\+\\s*)?(Project baru|New project|Buat project)\\s*$'
-    }, 15000);
-    if (newProjPos) await cdp.nativeClickAt(newProjPos.x, newProjPos.y, 3500);
+      if (res?.state === 'checked') {
+        onProgress(`✓ ${displayName}: diubah ke ${res.text}`);
+        return true;
+      }
+      onProgress(`[Peringatan] ${displayName}: gagal dipilih (${res?.state || 'tidak terbaca'}).`);
+      return false;
+    };
 
-    onProgress('Mengatur setelan awal ke Tab Gambar (Nano Banana, 9:16, x1)...');
-    const pillPosImg = await cdp.waitForElementCenter({
-      selector: 'button[aria-label="Pemicu setelan"], button.settings-trigger-button, button',
-      textRegexStr: 'Nano Banana|Imagen|Veo|Omni|Video|Gambar|x[1-4]',
-      minY: 500,
-      pickLast: true
-    }, 10000);
+    // Model: baca teks .model-select-trigger-content tanpa ikon arrow_drop_down
+    const readActiveModel = async () => (await evalFlow(`
+      (() => {
+        const content = document.querySelector('button[aria-label="Pilih rangkaian model"] .model-select-trigger-content');
+        if (!content) return '';
+        const clone = content.cloneNode(true);
+        clone.querySelectorAll('mat-icon').forEach(i => i.remove());
+        return (clone.textContent || '').trim();
+      })()
+    `)) || '';
 
-    if (pillPosImg) {
-      await cdp.nativeClickAt(pillPosImg.x, pillPosImg.y, 700);
+    const modelRegexStr = cleanModel
+      .split(/[\s\-–]+/)
+      .filter(Boolean)
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[\\s\\-–]*');
+    const MODEL_OPTION_SELECTOR = '.cdk-overlay-container .mat-mdc-menu-panel [role="menuitem"], .cdk-overlay-container .mat-mdc-menu-panel button, .cdk-overlay-container [role="listbox"] [role="option"]';
 
-      const tabGambar = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, [role="tab"], span',
-        textRegexStr: '^\\s*Gambar\\s*$'
-      });
-      if (tabGambar) await cdp.nativeClickAt(tabGambar.x, tabGambar.y, 500);
+    const isModelMenuOpen = async () => Boolean(await evalFlow(`!!document.querySelector('.cdk-overlay-container .mat-mdc-menu-panel')`));
 
-      const r916 = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, span',
-        textRegexStr: '^\\s*9:16\\s*$'
-      });
-      if (r916) await cdp.nativeClickAt(r916.x, r916.y, 500);
+    const selectFlowModel = async () => {
+      if (!(await openSettingsPanel())) {
+        onProgress('[Peringatan] Panel setelan Flow tidak terbuka, model dilewati.');
+        return false;
+      }
 
-      const x1Btn = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, span',
-        textRegexStr: '^\\s*x1\\s*$'
-      });
-      if (x1Btn) await cdp.nativeClickAt(x1Btn.x, x1Btn.y, 500);
+      const activeBefore = await readActiveModel();
+      if (activeBefore && new RegExp(modelRegexStr, 'i').test(activeBefore)) {
+        onProgress(`✓ Model AI: ${activeBefore} (sudah sesuai)`);
+        return true;
+      }
 
-      await cdp.pressKey('Escape', 27);
-      await sleep(800);
+      const trigger = await cdp.findElementCenter({ selector: 'flow-prompt-box-settings button[aria-label="Pilih rangkaian model"]' });
+      if (!trigger) {
+        onProgress('[Peringatan] Tombol dropdown model (Pilih rangkaian model) tidak ditemukan.');
+        return false;
+      }
+      await cdp.nativeClickAt(trigger.x, trigger.y, 500);
+
+      // Tunggu menu model muncul (animasi overlay), lalu cari opsi yang cocok
+      const findOption = () => evalFlow(`
+        (() => {
+          const re = new RegExp(${JSON.stringify(modelRegexStr)}, 'i');
+          const items = Array.from(document.querySelectorAll(${JSON.stringify(MODEL_OPTION_SELECTOR)}));
+          const opt = items.find(el => re.test(el.innerText || ''));
+          if (!opt) return { found: false, options: items.map(el => (el.innerText || '').split('\\n')[0].trim()).filter(Boolean).join(' | ') };
+          const r = opt.getBoundingClientRect();
+          return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        })()
+      `);
+
+      let opt = null;
+      for (let i = 0; i < 10; i++) {
+        opt = await findOption();
+        if (opt?.found) break;
+        await sleep(400);
+      }
+
+      if (opt?.found) {
+        await cdp.nativeClickAt(opt.x, opt.y, 700);
+      } else {
+        onProgress(`[Diagnostik] Opsi model terlihat: ${opt?.options || '(menu tidak terbuka)'}`);
+      }
+
+      // Tutup HANYA menu model jika masih terbuka (jangan tutup panel setelan)
+      if (await isModelMenuOpen()) {
+        await cdp.pressKey('Escape', 27);
+        await sleep(400);
+      }
+
+      const activeAfter = await readActiveModel();
+      if (activeAfter && new RegExp(modelRegexStr, 'i').test(activeAfter)) {
+        onProgress(`✓ Model AI: diubah ke ${activeAfter}`);
+        return true;
+      }
+      onProgress(`[Peringatan] Model AI gagal diubah ke ${cleanModel} (aktif: ${activeAfter || 'tidak terbaca'}).`);
+      return false;
+    };
+
+    const cleanRatio = String(flowRatio || '9:16').replace(/\s+/g, '');
+
+    if (await openSettingsPanel()) {
+      // Urutan penting: model diatur sebelum resolusi/durasi/output karena opsi tersebut bergantung pada model
+      await selectFlowToggle(['Mode'], '^\\s*Video\\s*$', 'Mode');
+      await selectFlowToggle(['Jenis video'], '^\\s*Bahan\\s*$', 'Jenis video');
+      await selectFlowToggle(['Rasio aspek'], `^\\s*${cleanRatio.replace(':', '\\s*:\\s*')}\\s*$`, 'Rasio');
+      await selectFlowModel();
+      await selectFlowToggle(['Resolusi', 'Kualitas', 'Resolution'], `^\\s*${cleanRes}`, 'Resolusi', true);
+      await selectFlowToggle(['Durasi', 'Duration'], `^\\s*${cleanDurationVal}\\s*(dtk|detik|s)?\\s*$`, 'Durasi', true);
+      await selectFlowToggle(['Jumlah output'], `^\\s*${cleanOutput}\\s*$`, 'Output');
+
+      // Biaya asli: <a class="credit-cost-link">12 kredit</a> (berubah sesuai model/resolusi/durasi/output)
+      await sleep(400);
+      const costText = await evalFlow(`(() => { const a = document.querySelector('flow-prompt-box-settings .credit-cost-link') || document.querySelector('.credit-cost-link'); return a ? (a.textContent || '').trim() : ''; })()`);
+      const costMatch = String(costText || '').replace(/(\d)[.,](?=\d{3}(?!\d))/g, '$1').match(/\d+/);
+      actualFlowCost = costMatch ? parseInt(costMatch[0], 10) : null;
+
+      if (actualFlowCost !== null) {
+        saveFlowCost(costKey, actualFlowCost);
+        const accCredit = parseInt((String(targetAcc.credits || '').replace(/(\d)[.,](?=\d{3}(?!\d))/g, '$1').match(/\d+/) || ['0'])[0], 10);
+        onProgress(`Biaya Flow (asli): ${actualFlowCost} kredit · Saldo ${targetAcc.name}: ${accCredit} kredit`);
+        if (accCredit < actualFlowCost) {
+          throw new Error(`Kredit ${targetAcc.name} (${accCredit}) tidak cukup untuk biaya render ${actualFlowCost} kredit (${cleanModel} · ${cleanRes} · ${cleanDurationVal} dtk · ${cleanOutput}). Pilih setelan lebih hemat atau login akun cadangan.`);
+        }
+      } else {
+        onProgress('[Peringatan] Label biaya kredit (credit-cost-link) tidak terbaca di Flow.');
+      }
+
+      // Tutup panel setelan
+      if (await isSettingsOpen()) {
+        await cdp.pressKey('Escape', 27);
+        await sleep(800);
+      }
+    } else {
+      onProgress('[Peringatan] Panel setelan Google Flow tidak bisa dibuka. Render memakai setelan terakhir di Flow.');
     }
 
-    onProgress('[PHOTO CANDID 1] Mengunggah master referensi kanvas...');
+    // Kredit lokal bisa usang (render gagal tetap memotong kredit di Flow) → baca saldo ASLI (setelah setelan model diatur).
+    // Habis / kurang → error kredit → akun ditandai 0 & render otomatis pindah ke akun Flow lain.
+    const realCredit = await readRealFlowCredit(cdp);
+    if (realCredit !== null) {
+      targetAcc.credits = `${realCredit} Kredit`;
+      try {
+        const cfgNow = getFlowAccountsConfigRaw();
+        const accNow = cfgNow.accounts.find((a) => a.id === targetAcc.id);
+        if (accNow) {
+          accNow.credits = targetAcc.credits;
+          accNow.creditsCheckedAt = Date.now();
+          saveFlowAccountsConfig(cfgNow);
+        }
+      } catch (e) {}
+      onProgress(`Saldo asli ${targetAcc.name} di Flow: ${realCredit} kredit.`);
+      const minNeeded = actualFlowCost || getCachedFlowCost(costKey) || 1;
+      if (realCredit < minNeeded) {
+        throw new Error(`Kredit ${targetAcc.name} di Flow tinggal ${realCredit}, tidak cukup untuk biaya render ${minNeeded} kredit.`);
+      }
+    } else {
+      onProgress('[Peringatan] Saldo kredit asli Flow tidak terbaca, memakai data lokal.');
+    }
+
     const editorPos = await cdp.waitForElementCenter({
       selector: 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]'
     }, 15000);
-    if (!editorPos) throw new Error('Kotak input prompt tidak ditemukan.');
+    if (!editorPos) throw new Error('Kotak prompt Flow tidak ditemukan.');
 
-    const img = nativeImage.createFromPath(canvasPath);
-    clipboard.writeImage(img);
-    await sleep(250);
-
-    await cdp.nativeClickAt(editorPos.x, editorPos.y, 400);
-    await cdp.sendCtrlV();
-    await sleep(2500);
-
-    const hasImg = await cdp.findElementCenter({
-      selector: 'flow-rich-text-editor img, .prompt-media-preview img, flow-canvas-tile img'
-    });
-    if (!hasImg) {
-      await cdp.setNativeFileInput(canvasPath);
-      await sleep(2500);
-    }
-
-    for (let w = 0; w < 30; w++) {
-      const loading = await cdp.findElementCenter({ selector: '.loading-percentage, flow-soupy-overlay' });
-      if (!loading) break;
-      await sleep(1200);
-    }
-
-    await submitPromptAndGenerate(cdp, parsedPrompts.photo1, onProgress, 'PHOTO CANDID 1');
-    
-    onProgress('[PHOTO CANDID 1] Selesai render! Mengunduh berkas ke Galeri Gambar...');
-    await downloadAndSaveFlowImage2K(cdp, tempDownloadDir, 1, parsedPrompts.photo1, onProgress);
-    await sleep(1500);
-
-    onProgress('[PHOTO CANDID 2] Menyeret (drag) gambar master ke kotak prompt...');
-    const masterTilePos2 = await getFirstCanvasImageTile(cdp);
-    const editorPos2 = await cdp.findElementCenter({
-      selector: 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]'
-    });
-
-    if (masterTilePos2 && editorPos2) {
-      await cdp.nativeDragAndDrop(masterTilePos2.x, masterTilePos2.y, editorPos2.x, editorPos2.y);
-      await sleep(1200);
-    }
-
-    await submitPromptAndGenerate(cdp, parsedPrompts.photo2, onProgress, 'PHOTO CANDID 2');
-
-    onProgress('[PHOTO CANDID 2] Selesai render! Mengunduh berkas ke Galeri Gambar...');
-    await downloadAndSaveFlowImage2K(cdp, tempDownloadDir, 2, parsedPrompts.photo2, onProgress);
-    await sleep(1500);
-
-    onProgress('[PHOTO CANDID 3] Menyeret (drag) gambar master ke kotak prompt...');
-    const masterTilePos3 = await getFirstCanvasImageTile(cdp);
-    const editorPos3 = await cdp.findElementCenter({
-      selector: 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]'
-    });
-
-    if (masterTilePos3 && editorPos3) {
-      await cdp.nativeDragAndDrop(masterTilePos3.x, masterTilePos3.y, editorPos3.x, editorPos3.y);
-      await sleep(1200);
-    }
-
-    await submitPromptAndGenerate(cdp, parsedPrompts.photo3, onProgress, 'PHOTO CANDID 3');
-
-    onProgress('[PHOTO CANDID 3] Selesai render! Mengunduh berkas ke Galeri Gambar...');
-    await downloadAndSaveFlowImage2K(cdp, tempDownloadDir, 3, parsedPrompts.photo3, onProgress);
-    await sleep(2000);
-
-    let cleanRatio = '9:16';
-    if (String(flowRatio).includes('16:9')) cleanRatio = '16:9';
-    else if (String(flowRatio).includes('4:5')) cleanRatio = '4:5';
-
-    const cleanRes = String(flowResolution).includes('360') ? '360p' : (String(flowResolution).includes('1080') ? '1080p' : '720p');
-
-    const durMatch = String(flowDuration).match(/\d+/);
-    const targetDurNum = durMatch ? durMatch[0] : '8';
-    const cleanDuration = `${targetDurNum} dtk`;
-
-    const rawModelStr = String(flowModel || 'Veo 3.1 - Lite');
-    const isVeoTarget = rawModelStr.toLowerCase().includes('veo');
-    const cleanModelDisplay = isVeoTarget ? 'Veo 3.1' : 'Omni 1.1 Flash';
-
-    onProgress(`Mengubah setelan Video: Rasio ${cleanRatio} · Model ${cleanModelDisplay} · ${cleanRes} · ${cleanDuration}...`);
-
-    const pillPosVid = await cdp.waitForElementCenter({
-      selector: 'button[aria-label="Pemicu setelan"], button.settings-trigger-button, button',
-      textRegexStr: 'Nano Banana|Imagen|Veo|Omni|Video|Gambar|x[1-4]',
-      minY: 500,
-      pickLast: true
-    }, 10000);
-
-    if (pillPosVid) {
-      await cdp.nativeClickAt(pillPosVid.x, pillPosVid.y, 750);
-
-      const tabVideo = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, [role="tab"], span',
-        textRegexStr: '^\\s*Video\\s*$'
-      });
-      if (tabVideo) await cdp.nativeClickAt(tabVideo.x, tabVideo.y, 600);
-
-      const typeBtn = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, span',
-        textRegexStr: '^\\s*Bahan\\s*$'
-      });
-      if (typeBtn) await cdp.nativeClickAt(typeBtn.x, typeBtn.y, 500);
-
-      const ratioBtn = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, [role="radio"], span',
-        textRegexStr: `^\\s*${cleanRatio.replace(':', '\\s*:\\s*')}\\s*$`,
-        minY: 180,
-        maxY: 780
-      });
-      if (ratioBtn) {
-        onProgress(`Memilih rasio: ${cleanRatio}...`);
-        await cdp.nativeClickAt(ratioBtn.x, ratioBtn.y, 500);
-      }
-
-      const modelDropdownTrigger = await cdp.send('Runtime.evaluate', {
-        expression: `
-          (() => {
-            const btns = Array.from(document.querySelectorAll('button, div[role="button"], [role="combobox"]')).filter(el => {
-              const r = el.getBoundingClientRect();
-              const txt = (el.innerText || el.textContent || '').trim();
-              return r.top > 180 && r.top < 780 && r.width > 30 && (txt.includes('Omni') || txt.includes('Veo') || txt.includes('Model'));
-            });
-            if (btns.length === 0) return null;
-            const r = btns[0].getBoundingClientRect();
-            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-          })()
-        `,
+    // Banner Flow yang muncul belakangan bisa menggeser layout ke bawah → sebelum tiap tempel: tutup banner,
+    // cari ulang posisi kotak prompt, fokuskan, lalu klik (posisi lama hanya dipakai bila pencarian gagal)
+    const focusPromptEditor = async (dx = 0, delayAfter = 400) => {
+      await dismissFlowOnboarding((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
+      const pos = await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          const e = document.querySelector('flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]');
+          if (!e) return null;
+          e.scrollIntoView({ block: 'center' });
+          e.focus();
+          const r = e.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        })()`,
         returnByValue: true
-      }).then(res => res?.result?.value).catch(() => null);
+      }).then((r) => r?.result?.value).catch(() => null);
+      const p = pos || editorPos;
+      await cdp.nativeClickAt(p.x + dx, p.y, delayAfter);
+    };
 
-      if (modelDropdownTrigger) {
-        await cdp.nativeClickAt(modelDropdownTrigger.x, modelDropdownTrigger.y, 700);
+    if (storyboardImagePath && fs.existsSync(storyboardImagePath)) {
+      onProgress('Menempelkan gambar Storyboard ke dalam prompt...');
+      const img = nativeImage.createFromPath(storyboardImagePath);
+      // Clipboard dipakai bersama semua worker: tulis + tempel dalam satu giliran
+      await withClipboardLock(async () => {
+        clipboard.writeImage(img);
+        await sleep(300);
 
-        const targetModelRegex = isVeoTarget ? 'Veo\\s*3(?:\\.1)?|Veo' : 'Omni\\s*1(?:\\.1)?|Omni';
-        const targetModelOption = await cdp.waitForElementCenter({
-          selector: '.mat-mdc-menu-panel button, [role="menuitem"], [role="option"], flow-menu-item, span, div',
-          textRegexStr: targetModelRegex
-        }, 5000);
-
-        if (targetModelOption) {
-          onProgress(`Memilih model: ${cleanModelDisplay}...`);
-          await cdp.nativeClickAt(targetModelOption.x, targetModelOption.y, 600);
-        } else {
-          await cdp.pressKey('Escape', 27);
-          await sleep(300);
-        }
-      }
-
-      const resBtn = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, [role="radio"], span',
-        textRegexStr: `^\\s*${cleanRes}`,
-        minY: 180,
-        maxY: 780
+        await focusPromptEditor(0, 400);
+        await cdp.sendCtrlV();
       });
-      if (resBtn) {
-        onProgress(`Memilih resolusi video: ${cleanRes}...`);
-        await cdp.nativeClickAt(resBtn.x, resBtn.y, 500);
-      }
+      // Dialog "Hak untuk menggunakan gambar ini" bisa muncul setelah tempel gambar
+      await sleep(1500);
+      await agreeFlowImageRights(cdp, onProgress, sleep);
 
-      onProgress(`Memilih durasi: ${targetDurNum} Detik...`);
-      let durBtn = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, [role="radio"], [role="button"], span',
-        textRegexStr: `^\\s*${targetDurNum}\\s*(?:dtk|s|detik)?\\.?\\s*$`,
-        minY: 180,
-        maxY: 780
-      });
+      onProgress('Menunggu gambar storyboard selesai diunggah ke prompt (100%)...');
+      const startUploadWait = Date.now();
+      let uploadFinished = false;
 
-      if (!durBtn) {
-        durBtn = await cdp.send('Runtime.evaluate', {
+      while (Date.now() - startUploadWait < 60000) {
+        const checkResult = await cdp.send('Runtime.evaluate', {
           expression: `
             (() => {
-              const buttons = Array.from(document.querySelectorAll('mat-button-toggle, button, [role="radio"]')).filter(el => {
-                const r = el.getBoundingClientRect();
-                return r.top > 180 && r.top < 780 && r.width > 20 && r.height > 20;
-              });
+              const allText = document.body.innerText || '';
+              const percentMatch = allText.match(/\\b(\\d{1,2})%\\b/);
+              const isPercentActive = !!percentMatch;
 
-              const target = buttons.find(b => {
-                const txt = (b.innerText || b.textContent || '').trim();
-                return new RegExp('^' + ${JSON.stringify(targetDurNum)} + '(\\\\s*(dtk|s|detik))?$', 'i').test(txt);
-              });
+              const isSpinnerActive = !!document.querySelector('.loading-percentage, mat-progress-spinner, [role="progressbar"], circle[stroke-dasharray]');
 
-              if (!target) return null;
-              target.scrollIntoView({ behavior: 'instant', block: 'center' });
-              const rect = target.getBoundingClientRect();
-              return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+              const editor = document.querySelector('flow-rich-text-editor, .ProseMirror');
+              const hasChip = !!editor?.querySelector('flow-image-chip, img, [data-node-type="image"], .chip');
+
+              return { isPercentActive, isSpinnerActive, hasChip, currentPercent: percentMatch ? percentMatch[1] : '100' };
             })()
           `,
           returnByValue: true
-        }).then(res => res?.result?.value).catch(() => null);
+        }).catch(() => null);
+
+        await agreeFlowImageRights(cdp, onProgress, sleep);
+        const state = checkResult?.result?.value;
+        if (state) {
+          if (state.isPercentActive) {
+            onProgress(`Mengunggah gambar: ${state.currentPercent}%...`);
+          } else if (!state.isSpinnerActive) {
+            uploadFinished = true;
+            break;
+          }
+        }
+        await sleep(2000);
       }
 
-      if (durBtn) {
-        await cdp.nativeClickAt(durBtn.x, durBtn.y, 500);
-      } else {
-        const durFallback = await cdp.findElementCenter({
-          selector: 'mat-button-toggle, button, [role="radio"], span',
-          textRegexStr: '8 dtk|8s|6 dtk|6s|10 dtk|4 dtk',
-          minY: 180,
-          maxY: 780
-        });
-        if (durFallback) await cdp.nativeClickAt(durFallback.x, durFallback.y, 500);
+      await sleep(2500);
+      onProgress('Gambar storyboard selesai diunggah 100%.');
+    }
+
+    const fullScenesPrompt = buildFull5ScenesPrompt(promptText);
+    onProgress('Memasukkan seluruh prompt Scene 1 s/d 5 ke dalam prompt Flow...');
+    // Clipboard dipakai bersama semua worker: tulis + tempel dalam satu giliran
+    await withClipboardLock(async () => {
+      clipboard.writeText(fullScenesPrompt);
+      await sleep(250);
+
+      await focusPromptEditor(30, 350);
+      await cdp.sendCtrlV();
+    });
+    // Dialog "Hak untuk menggunakan gambar ini" bisa muncul setelah tempel gambar
+    await sleep(1500);
+    await agreeFlowImageRights(cdp, onProgress, sleep);
+    await humanDelay(1000, 1500);
+
+    interceptedVideoUrls.length = 0;
+
+    onProgress('Memulai pembuatan video (Flow TikTok)...');
+    const genBtnPos = await cdp.findElementCenter({
+      selector: 'button[aria-label="Mulai pembuatan"], button.generate-icon-button, button',
+      textRegexStr: 'arrow_forward|Mulai pembuatan',
+      pickLast: true
+    });
+
+    if (genBtnPos) {
+      await cdp.nativeClickAt(genBtnPos.x, genBtnPos.y, 1000);
+    } else {
+      await cdp.pressKey('Enter', 13);
+    }
+
+    onProgress('Menunggu antrean & inisialisasi render video di Google Flow...');
+    await sleep(7000);
+
+    const maxWaitMs = 30 * 60 * 1000; // cukup untuk 5x "Coba lagi"
+    const startRender = Date.now();
+    let isRenderCompleted = false;
+    let detectedVideoSrc = '';
+    let sawRenderPercent = false;
+    let renderRetryCount = 0;
+    // Kartu video gagal → klik "Coba lagi" sampai 5x dulu, baru ganti akun Flow
+    const MAX_RENDER_RETRY = 5;
+
+    // Klik elemen: utamakan klik native (posisi), fallback klik via DOM
+    const clickFlowElement = async (selector) => {
+      const pos = await cdp.findElementCenter({ selector });
+      if (pos) {
+        await cdp.nativeClickAt(pos.x, pos.y, 600);
+        return true;
+      }
+      const res = await cdp.send('Runtime.evaluate', {
+        expression: `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (el) { el.click(); return true; } return false; })()`,
+        returnByValue: true
+      }).catch(() => null);
+      await sleep(600);
+      return Boolean(res?.result?.value);
+    };
+
+    const isSilentToggleOn = async () => {
+      const res = await cdp.send('Runtime.evaluate', {
+        expression: `(() => { const b = document.querySelector('button[name="return-silent-videos"]'); return b ? b.getAttribute('aria-checked') : 'missing'; })()`,
+        returnByValue: true
+      }).catch(() => null);
+      return res?.result?.value || 'missing';
+    };
+
+    // Kartu gagal audio: buka "setelan" → nyalakan "Tampilkan video senyap" → klik "Coba lagi"
+    const enableSilentVideoAndRetry = async () => {
+      await clickFlowElement('.error-tile button.settings-link');
+
+      let toggleState = 'missing';
+      for (let i = 0; i < 10 && toggleState === 'missing'; i++) {
+        await sleep(500);
+        toggleState = await isSilentToggleOn();
       }
 
-      const x1Pos = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, [role="radio"], span',
-        textRegexStr: '^\\s*x1\\s*$',
-        minY: 180,
-        maxY: 780
-      });
-      if (x1Pos) {
-        await cdp.nativeClickAt(x1Pos.x, x1Pos.y, 500);
+      if (toggleState === 'false') {
+        await clickFlowElement('button[name="return-silent-videos"]');
+        toggleState = await isSilentToggleOn();
       }
+      onProgress(`[Pemulihan] Tampilkan video senyap: ${toggleState === 'true' ? 'Aktif' : 'gagal diaktifkan (' + toggleState + ')'}`);
 
       await cdp.pressKey('Escape', 27);
       await sleep(800);
+
+      const retried = await clickFlowElement('.error-tile button[aria-label="Coba lagi"]');
+      onProgress(retried ? '[Pemulihan] Klik "Coba lagi" pada kartu video yang gagal...' : '[Pemulihan] Tombol "Coba lagi" tidak ditemukan.');
+      await sleep(5000);
+      return retried;
+    };
+
+    while (Date.now() - startRender < maxWaitMs) {
+      await sleep(3500);
+      const elapsedSec = Math.round((Date.now() - startRender) / 1000);
+
+      const statusCheck = await cdp.send('Runtime.evaluate', {
+        expression: `
+          (() => {
+            const isVisible = (el) => {
+              if (!el) return false;
+              const r = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return r.width > 5 && r.height > 5 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+
+            const bodyTxt = document.body.innerText || '';
+
+            if (/aktivitas\\s+(yang\\s+)?tidak\\s+biasa|unusual\\s+activity/i.test(bodyTxt)) {
+              return { status: 'unusual' };
+            }
+
+            if (/insufficient credits|not enough credits|out of (google flow )?credits|kredit (google flow )?(anda )?(tidak cukup|tidak mencukupi|habis)/i.test(bodyTxt)) {
+              return { status: 'out_of_credits' };
+            }
+
+            // Kartu gagal: <div class="error-tile"> ... <span class="error-message-text">...</span>
+            const errTile = Array.from(document.querySelectorAll('.error-tile')).find(isVisible);
+            if (errTile) {
+              const msgEl = errTile.querySelector('.error-message-text');
+              const message = ((msgEl && msgEl.textContent) || errTile.innerText || '').split('\\n').join(' ').trim();
+              return {
+                status: 'error',
+                message,
+                canSilent: Boolean(errTile.querySelector('.settings-link')) && message.toLowerCase().includes('audio')
+              };
+            }
+
+            // Sumber utama progres: <div class="loading-percentage">NN%</div> milik Google Flow
+            const percentVals = Array.from(document.querySelectorAll('.loading-percentage'))
+              .map(el => (el.textContent || '').trim())
+              .filter(txt => /\\d+\\s*%/.test(txt))
+              .map(txt => parseInt(txt, 10));
+            if (percentVals.length > 0) {
+              return { status: 'rendering', percent: Math.max(...percentVals) + '%' };
+            }
+
+            const loadingEls = Array.from(document.querySelectorAll('mat-progress-spinner, flow-soupy-overlay, [role="progressbar"]'));
+            const activeSpinner = loadingEls.find(el => isVisible(el));
+
+            const videoEls = Array.from(document.querySelectorAll('flow-video-tile video, video')).filter(isVisible);
+            const playCards = Array.from(document.querySelectorAll('flow-video-tile, [aria-label*="play" i], [aria-label*="putar" i]')).filter(isVisible);
+
+            if (!activeSpinner && (videoEls.length > 0 || playCards.length > 0)) {
+              const v = videoEls[0];
+              const src = v ? (v.currentSrc || v.src || (v.querySelector('source') ? v.querySelector('source').src : '')) : '';
+              return { status: 'done', src };
+            }
+
+            return {
+              status: 'rendering',
+              percent: activeSpinner ? (activeSpinner.innerText || '').trim() : ''
+            };
+          })()
+        `,
+        returnByValue: true
+      }).catch(() => null);
+
+      const state = statusCheck?.result?.value;
+
+      if (state?.status === 'out_of_credits') {
+        throw new Error('Kredit Google Flow habis saat proses render berlangsung.');
+      }
+
+      if (state?.status === 'unusual') {
+        throw new Error('Akun Google Flow terkena peringatan aktivitas tidak biasa.');
+      }
+
+      if (state?.status === 'error') {
+        const info = jelaskanErrorFlow(state.message);
+        if (state.canSilent && renderRetryCount < MAX_RENDER_RETRY) {
+          renderRetryCount++;
+          onProgress(`[Flow Gagal] ${state.message} → Mode video senyap & coba lagi (${renderRetryCount}/${MAX_RENDER_RETRY})...`);
+          await enableSilentVideoAndRetry();
+          sawRenderPercent = false;
+          continue;
+        }
+        // Error lain yang bisa dipulihkan → klik "Coba lagi" pada kartu yang gagal
+        if (renderRetryCount < MAX_RENDER_RETRY) {
+          renderRetryCount++;
+          onProgress(`[Flow Gagal] "${state.message || 'Gagal'}" — ${info.alasan} → coba lagi (${renderRetryCount}/${MAX_RENDER_RETRY})...`);
+          const retried = await clickFlowElement('.error-tile button[aria-label="Coba lagi"]');
+          onProgress(retried ? '[Pemulihan] Klik "Coba lagi" pada kartu video yang gagal...' : '[Pemulihan] Tombol "Coba lagi" tidak ditemukan.');
+          if (retried) { await sleep(5000); sawRenderPercent = false; continue; }
+        }
+        throw new Error(`[Ganti Akun] Kartu video Flow tetap gagal setelah ${renderRetryCount}x "Coba lagi": "${state.message || 'Gagal'}" — ${info.alasan}`);
+      }
+
+      if (state?.percent) sawRenderPercent = true;
+
+      // Selesai jika loading-percentage sudah hilang (pernah terlihat) atau fallback tile video setelah 15 dtk
+      const isPercentGone = state?.status !== 'rendering' && sawRenderPercent;
+      if ((isPercentGone && state?.status === 'done') || ((state?.status === 'done' || interceptedVideoUrls.length > 0) && !state?.percent && elapsedSec >= 15)) {
+        isRenderCompleted = true;
+        detectedVideoSrc = state?.src || interceptedVideoUrls[0] || '';
+        onProgress(`Video berhasil dirender (${elapsedSec} dtk)! Memulai pengunduhan berkas...`);
+        await sleep(2500);
+        break;
+      }
+
+      const pctInfo = state?.percent ? ` (${state.percent})` : '';
+      onProgress(`Sedang merender video di Google Flow${pctInfo} [${elapsedSec} dtk]...`);
     }
 
-    onProgress('[VIDEO TIKTOK] Menyeret (drag) gambar master ke kotak prompt video...');
-    const masterTilePosVid = await getFirstCanvasImageTile(cdp);
-    const editorPosVid = await cdp.findElementCenter({
-      selector: 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]'
-    });
-
-    if (masterTilePosVid && editorPosVid) {
-      await cdp.nativeDragAndDrop(masterTilePosVid.x, masterTilePosVid.y, editorPosVid.x, editorPosVid.y);
-      await sleep(1200);
+    if (!isRenderCompleted) {
+      // Diagnostik: simpan screenshot halaman Flow saat render tidak selesai
+      const shotPath = path.join(os.tmpdir(), `flow_timeout_${Date.now()}.png`);
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' }).catch(() => null);
+      if (shot?.data) fs.writeFileSync(shotPath, Buffer.from(shot.data, 'base64'));
+      throw new Error(`Batas waktu render habis (video belum selesai diproses oleh Google Flow). Screenshot: ${shotPath}`);
     }
-
-    interceptedVideoUrls.length = 0;
-    await submitPromptAndGenerate(cdp, parsedPrompts.video, onProgress, 'VIDEO MOTION TIKTOK');
 
     const timestamp = Date.now();
     const videoFileName = `video_tiktok_${timestamp}.mp4`;
     const sessionVideoPath = path.join(SESSIONS_VIDEOS_DIR, videoFileName);
     const storageVideoPath = path.join(OUTPUT_VIDEOS_DIR, videoFileName);
 
-    onProgress('Membuka pratinjau video TikTok terbaru (kartu terdepan)...');
+    const tempDownloadDir = path.resolve(ROOT_DIR, 'temp/flow_dl_tiktok_' + timestamp);
+    if (!fs.existsSync(tempDownloadDir)) fs.mkdirSync(tempDownloadDir, { recursive: true });
 
-    const videoTilePos = await cdp.send('Runtime.evaluate', {
-      expression: `
-        (() => {
-          const tiles = Array.from(document.querySelectorAll('flow-video-tile, flow-media-tile, flow-canvas-tile, .media-strip flow-video-tile, video')).filter(el => {
-            const r = el.getBoundingClientRect();
-            return r.top > 60 && r.top < 650 && r.width > 40 && r.height > 40;
-          });
+    await cdp.send('Browser.setDownloadBehavior', {
+      behavior: 'allow',
+      downloadPath: tempDownloadDir,
+      eventsEnabled: true
+    }).catch(() => {});
 
-          if (tiles.length === 0) return null;
+    let videoCardPos = await cdp.findElementCenter({
+      selector: 'flow-video-tile, video',
+      minY: 100,
+      maxY: 750
+    });
 
-          tiles.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
-          const target = tiles[0];
-          target.scrollIntoView({ behavior: 'instant', block: 'center' });
-          const r = target.getBoundingClientRect();
-          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-        })()
-      `,
-      returnByValue: true
-    }).then(res => res?.result?.value).catch(() => null);
-
-    if (videoTilePos) {
-      await cdp.nativeClickAt(videoTilePos.x, videoTilePos.y, 2500);
-    } else {
-      const fallbackCard = await cdp.waitForElementCenter({
-        selector: 'flow-video-tile, video',
-        minY: 80,
+    if (!videoCardPos) {
+      videoCardPos = await cdp.findElementCenter({
+        selector: 'mat-icon, button',
+        textRegexStr: '^\\s*(play_arrow|play_circle|putar)\\s*$',
+        minY: 100,
         maxY: 750
-      }, 5000);
-      if (fallbackCard) await cdp.nativeClickAt(fallbackCard.x, fallbackCard.y, 2500);
+      });
+    }
+
+    if (videoCardPos) {
+      await cdp.nativeClickAt(videoCardPos.x, videoCardPos.y, 2500);
+    }
+
+    if (!detectedVideoSrc || !detectedVideoSrc.startsWith('http')) {
+      const srcCheck = await cdp.send('Runtime.evaluate', {
+        expression: `
+          (() => {
+            const vids = Array.from(document.querySelectorAll('video'));
+            for (const v of vids) {
+              const s = v.currentSrc || v.src || (v.querySelector('source') ? v.querySelector('source').src : '');
+              if (s) return s;
+            }
+            return '';
+          })()
+        `,
+        returnByValue: true
+      }).catch(() => null);
+
+      if (srcCheck?.result?.value) {
+        detectedVideoSrc = srcCheck.result.value;
+      }
     }
 
     let isSavedSuccess = false;
 
-    onProgress('Mengekstrak stream video langsung dari pemutar...');
-    const domVideoSrc = await cdp.send('Runtime.evaluate', {
-      expression: `
-        (() => {
-          const v = document.querySelector('video[src], video');
-          if (v) {
-            return v.currentSrc || v.src || '';
-          }
-          return '';
-        })()
-      `,
-      returnByValue: true
-    }).then(res => res?.result?.value).catch(() => '');
+    const candidateUrls = [
+      ...(detectedVideoSrc && detectedVideoSrc.startsWith('http') ? [detectedVideoSrc] : []),
+      ...interceptedVideoUrls
+    ];
 
-    if (domVideoSrc && domVideoSrc.startsWith('http') && !domVideoSrc.startsWith('blob:')) {
-      if (!interceptedVideoUrls.includes(domVideoSrc)) {
-        interceptedVideoUrls.unshift(domVideoSrc);
-      }
-    }
-
-    if (interceptedVideoUrls.length > 0) {
-      for (const vUrl of interceptedVideoUrls) {
-        try {
-          onProgress('Mengunduh stream biner video...');
-          await downloadFileFromUrl(vUrl, sessionVideoPath);
-          if (fs.existsSync(sessionVideoPath) && fs.statSync(sessionVideoPath).size > 30000) {
-            isSavedSuccess = true;
-            break;
-          }
-        } catch (e) {}
-      }
+    for (const vUrl of candidateUrls) {
+      if (isSavedSuccess) break;
+      try {
+        onProgress('Mengunduh video langsung dari URL (sesi login Flow)...');
+        // Dengan cookie sesi Chrome bot dulu; bila gagal, cara lama tanpa cookie
+        await downloadVideoViaSession(cdp, vUrl, sessionVideoPath).catch(() => downloadFileFromUrl(vUrl, sessionVideoPath));
+        if (fs.existsSync(sessionVideoPath) && fs.statSync(sessionVideoPath).size > 50000) {
+          isSavedSuccess = true;
+          onProgress(`Video berhasil diunduh langsung (${Math.round(fs.statSync(sessionVideoPath).size / 1024)} KB)!`);
+          break;
+        }
+      } catch (e) {}
     }
 
     if (!isSavedSuccess) {
-      onProgress('Menekan tombol unduh video di antarmuka Flow...');
-      const dlBtnPos = await cdp.waitForElementCenter({
-        selector: 'button[aria-label*="Unduh" i], button[aria-label*="Download" i], button, a[download]',
-        textRegexStr: '^\\s*(Unduh|Download)\\s*$',
-        maxY: 680,
-        pickLast: true
-      }, 7000);
+      const dlBtnPos = await cdp.findElementCenter({
+        selector: 'button, [role="button"], a[download]',
+        textRegexStr: 'download|unduh',
+        maxY: 650
+      });
 
       if (dlBtnPos) {
+        onProgress('Menekan tombol Unduh di Google Flow...');
         await cdp.nativeClickAt(dlBtnPos.x, dlBtnPos.y, 1200);
 
-        const resMenuPos = await cdp.findElementCenter({
-          selector: '.mat-mdc-menu-panel button, flow-menu-item, span, div',
-          textRegexStr: `${cleanRes}|Original|Asli|720p|1080p`
-        });
-        if (resMenuPos) await cdp.nativeClickAt(resMenuPos.x, resMenuPos.y, 1500);
+        const priorityRes = ['720p', 'Original', 'Asli', '360p'];
+        for (const rLabel of priorityRes) {
+          const resMenuPos = await cdp.findElementCenter({
+            selector: 'flow-menu-item, button[role="menuitem"], .cdk-overlay-container button, span',
+            textRegexStr: rLabel
+          });
+          if (resMenuPos) {
+            onProgress(`Memilih resolusi unduhan (${rLabel})...`);
+            await cdp.nativeClickAt(resMenuPos.x, resMenuPos.y, 1500);
+            break;
+          }
+        }
 
-        for (let waitDl = 0; waitDl < 50; waitDl++) {
+        for (let waitDl = 0; waitDl < 45; waitDl++) {
           await sleep(1000);
           if (fs.existsSync(tempDownloadDir)) {
             const allFiles = fs.readdirSync(tempDownloadDir);
-            const dlFiles = allFiles.filter((f) => !f.endsWith('.crdownload') && !f.endsWith('.tmp') && /\.(mp4|webm|mov)$/i.test(f));
-            if (dlFiles.length > 0) {
-              const fullPath = path.join(tempDownloadDir, dlFiles[0]);
-              if (fs.statSync(fullPath).size > 30000) {
-                fs.copyFileSync(fullPath, sessionVideoPath);
+            const isDownloading = allFiles.some((f) => f.endsWith('.crdownload') || f.endsWith('.tmp'));
+            const dlFiles = allFiles.filter(
+              (f) => !f.endsWith('.crdownload') && !f.endsWith('.tmp') && /\.(mp4|webm|mov)$/i.test(f)
+            );
+            if (dlFiles.length > 0 && !isDownloading) {
+              const downloadedFullPath = path.join(tempDownloadDir, dlFiles[0]);
+              if (fs.statSync(downloadedFullPath).size > 50000) {
+                fs.copyFileSync(downloadedFullPath, sessionVideoPath);
                 isSavedSuccess = true;
+                onProgress('Video berhasil diunduh via menu browser!');
                 break;
               }
             }
+          }
+          if (interceptedVideoUrls.length > 0) {
+            try {
+              await downloadFileFromUrl(interceptedVideoUrls[0], sessionVideoPath);
+              if (fs.existsSync(sessionVideoPath) && fs.statSync(sessionVideoPath).size > 50000) {
+                isSavedSuccess = true;
+                break;
+              }
+            } catch (e) {}
           }
         }
       }
     }
 
-    if (!isSavedSuccess || !fs.existsSync(sessionVideoPath) || fs.statSync(sessionVideoPath).size < 30000) {
-      throw new Error('Gagal mengunduh video jadi dari Google Flow.');
-    }
+    if (!isSavedSuccess) {
+      onProgress('Mengekstrak stream video dari buffer pemutar...');
+      const base64VideoRes = await cdp.send('Runtime.evaluate', {
+        expression: `
+          (async () => {
+            try {
+              const vids = Array.from(document.querySelectorAll('video'));
+              const targetVid = vids.find(v => v.currentSrc || v.src || v.querySelector('source')) || vids[0];
+              if (!targetVid) return { error: 'Elemen video tidak ditemukan' };
 
-    fs.copyFileSync(sessionVideoPath, storageVideoPath);
+              const url = targetVid.currentSrc || targetVid.src || (targetVid.querySelector('source') ? targetVid.querySelector('source').src : '');
+              if (!url) return { error: 'URL video kosong' };
 
-    const videoResult = registerVideoToMetadata(
-      videoFileName,
-      sessionVideoPath,
-      storageVideoPath,
-      parsedPrompts.video,
-      canvasPath
-    );
+              let response = null;
+              try {
+                response = await fetch(url);
+              } catch (e1) {
+                response = await fetch(url, { credentials: 'include' });
+              }
 
-    const finalCredits = await extractCurrentFlowCredits(cdp);
-    if (finalCredits !== null) {
-      const cfg = getFlowAccountsConfigRaw();
-      const accInCfg = (cfg.accounts || []).find((a) => a.id === targetAcc.id);
-      if (accInCfg) {
-        accInCfg.credits = `${finalCredits} Kredit`;
-        saveFlowAccountsConfig(cfg);
-        try {
-          BrowserWindow.getAllWindows().forEach((win) => {
-            if (!win.isDestroyed()) win.webContents.send('flow-accounts-updated', cfg);
-          });
-        } catch (e) {}
+              if (!response || !response.ok) return { error: 'HTTP Failed', url };
+
+              const blob = await response.blob();
+              return await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const base64 = String(reader.result || '').split(',')[1] || '';
+                  resolve({ base64, url });
+                };
+                reader.onerror = () => resolve({ error: 'Gagal membaca blob', url });
+                reader.readAsDataURL(blob);
+              });
+            } catch (err) {
+              return { error: err.message };
+            }
+          })()
+        `,
+        awaitPromise: true,
+        returnByValue: true
+      }).catch(() => null);
+
+      const extracted = base64VideoRes?.result?.value;
+      if (extracted?.base64 && extracted.base64.length > 10000) {
+        const videoBuffer = Buffer.from(extracted.base64, 'base64');
+        fs.writeFileSync(sessionVideoPath, videoBuffer);
+        isSavedSuccess = true;
+        onProgress(`Video berhasil diekstrak (${Math.round(videoBuffer.length / 1024)} KB)!`);
       }
     }
-
-    onProgress('Semua 3 foto candid dan 1 video motion berhasil disimpan!');
-
-    try { await cdp.send('Browser.close'); } catch (e) {}
-    await sleep(800);
-    cdp.close();
-    if (chromeProcess && !chromeProcess.killed) try { chromeProcess.kill(); } catch (e) {}
 
     try {
       if (fs.existsSync(tempDownloadDir)) fs.rmSync(tempDownloadDir, { recursive: true, force: true });
     } catch (e) {}
 
+    if (!isSavedSuccess || !fs.existsSync(sessionVideoPath) || fs.statSync(sessionVideoPath).size < 50000) {
+      throw new Error('Gagal mengunduh berkas video jadi dari Google Flow (file kosong/belum selesai).');
+    }
+
+    fs.copyFileSync(sessionVideoPath, storageVideoPath);
+
+    try {
+      const cfgNow = getFlowAccountsConfigRaw();
+      const currentAcc = cfgNow.accounts.find((a) => a.id === targetAcc.id);
+      if (currentAcc) {
+        const numMatch = String(currentAcc.credits).replace(/(\d)[.,](?=\d{3}(?!\d))/g, '$1').match(/\d+/);
+        const currentNum = numMatch ? parseInt(numMatch[0], 10) : 50;
+        const outputNum = Math.min(4, Math.max(1, parseInt(flowOutputCount, 10) || 1));
+        // Pakai biaya asli dari label Flow; estimasi 10/output hanya jika label tidak terbaca
+        const spentCredit = actualFlowCost !== null ? actualFlowCost : 10 * outputNum;
+        const newCreditValue = Math.max(0, currentNum - spentCredit);
+        currentAcc.credits = `${newCreditValue} Kredit`;
+
+        if (newCreditValue < (actualFlowCost || 1)) {
+          const nextReady = cfgNow.accounts.find((a) => a.id !== currentAcc.id && a.status === 'Sesi Aktif');
+          if (nextReady) {
+            cfgNow.activeAccountId = nextReady.id;
+            onProgress(`[Rotasi Otomatis] Saldo ${currentAcc.name} tersisa ${newCreditValue} Kredit. Akun aktif dialihkan ke ${nextReady.name}.`);
+          }
+        }
+
+        saveFlowAccountsConfig(cfgNow);
+        onProgress(`[Kredit Terpotong] Saldo ${currentAcc.name} tersisa ${currentAcc.credits}.`);
+      }
+    } catch (errDec) {}
+
+    try { await cdp.send('Browser.close'); } catch (e) {}
+    cdp.close();
+    if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
     await releaseGenerateSlot(onProgress);
 
     return {
       success: true,
-      workerId: 1,
-      accountUsed: targetAcc.name,
-      videoPath: videoResult.filePath,
-      storagePath: videoResult.storagePath,
-      fileName: videoResult.fileName,
-      thumbnailPath: videoResult.thumbnailPath,
-      videoResult
+      videoPath: fs.existsSync(storageVideoPath) ? storageVideoPath : sessionVideoPath,
+      storagePath: storageVideoPath,
+      fileName: videoFileName,
+      thumbnailPath: storyboardImagePath || ''
     };
   } catch (err) {
-    const msg = err.message || 'Kendala eksekusi Flow TikTok';
-    onProgress(`Kendala Flow TikTok: ${msg}`);
-    if (cdp) {
-      try { await cdp.send('Browser.close'); } catch (e) {}
-      cdp.close();
-    }
-    if (chromeProcess && !chromeProcess.killed) {
-      try { chromeProcess.kill(); } catch (e) {}
-    }
+    if (cdp) cdp.close();
+    // Gagal → tutup tuntas Chrome Flow (termasuk proses anak) & lepas kunci profil agar bisa langsung dijalankan lagi
+    await cleanupFailedChrome({ proc: chromeProcess, profileDir, onProgress });
     await releaseGenerateSlot(onProgress);
-    return { success: false, workerId: 1, error: msg };
+    // Gagal karena akun → catat (kredit 0 / istirahat) agar rotasi tidak memilihnya lagi, lalu pemanggil coba akun lain
+    const accountFailure = targetAcc ? classifyFlowAccountFailure(err.message) : null;
+    if (accountFailure) {
+      try {
+        const cfgNow = getFlowAccountsConfigRaw();
+        const acc = cfgNow.accounts.find((a) => a.id === targetAcc.id);
+        if (acc) {
+          if (accountFailure === 'credits') acc.credits = '0 Kredit';
+          else if (accountFailure === 'blocked') acc.blockedUntil = Date.now() + FLOW_BLOCK_MS;
+          saveFlowAccountsConfig(cfgNow);
+        }
+        onProgress(accountFailure === 'render'
+          ? `[Rotasi Akun] Kartu video di ${targetAcc.name} gagal ${5}x → pindah ke akun Flow lain.`
+          : accountFailure === 'credits'
+          ? `[Rotasi Akun] Kredit ${targetAcc.name} habis → ditandai 0 kredit.`
+          : `[Rotasi Akun] ${targetAcc.name} ditandai Flow → diistirahatkan ${FLOW_BLOCK_MS / 3600000} jam.`);
+      } catch (e) {}
+    }
+    return { success: false, error: err.message, accountUnavailable: Boolean(accountFailure) };
   }
 }
 
 module.exports = {
-  runFlowProjectCreationTiktok,
-  ensureActiveAccountWithSufficientCredits,
-  deleteFlowAccount
+  runFlowProjectCreationTiktok: runFlowProjectCreationTiktokDaster,
+  runFlowProjectCreationTiktokDaster
 };
+
+// Penjelasan error kartu Google Flow untuk log aplikasi + apakah layak dicoba ulang
+function jelaskanErrorFlow(message) {
+  const m = String(message || '').toLowerCase();
+  if (/kebijakan|policy|guideline|pedoman|melanggar|violat|unsafe|tidak aman|sensitive|sensitif|prominent|tokoh|minor|anak/.test(m)) {
+    return { alasan: 'Prompt / gambar ditolak filter keamanan Google Flow (kebijakan konten). Ubah storyboard atau gambar produk.', bisaUlang: false };
+  }
+  if (/audio|suara/.test(m)) return { alasan: 'Google Flow gagal membuat audio video.', bisaUlang: true };
+  if (/kredit|credit|kuota|quota|limit/.test(m)) return { alasan: 'Kredit / kuota akun Flow tidak cukup.', bisaUlang: false };
+  if (/gambar|image|upload|unggah/.test(m)) return { alasan: 'Gambar referensi bermasalah di Google Flow (gagal dibaca / ditolak).', bisaUlang: true };
+  if (/server|coba lagi|try again|something went wrong|terjadi kesalahan|error|gagal|failed|unavailable|timeout/.test(m)) {
+    return { alasan: 'Gangguan sementara di server Google Flow.', bisaUlang: true };
+  }
+  return { alasan: 'Google Flow menolak / gagal membuat video.', bisaUlang: true };
+}
+
+const MAX_ACCOUNT_SWITCH = 3;
+// Setiap render berjalan dengan peminjaman akun Flow sendiri (aman untuk banyak worker sekaligus)
+for (const key of Object.keys(module.exports)) {
+  const fn = module.exports[key];
+  if (typeof fn !== 'function') continue;
+  // Render gagal karena akun (kredit habis / ditandai Flow) → ulangi otomatis dengan akun Flow lain
+  module.exports[key] = async (options = {}) => {
+    let res;
+    for (let attempt = 0; attempt <= MAX_ACCOUNT_SWITCH; attempt++) {
+      res = await runWithFlowLease(() => fn(options));
+      // Selalu tampilkan penyebab kegagalan di log aplikasi
+      if (res && res.success === false && res.error && !/dibatalkan/i.test(res.error) && typeof options.onProgress === 'function') {
+        options.onProgress(`[Flow Gagal] ${res.error}`);
+      }
+      if (!res?.accountUnavailable || attempt === MAX_ACCOUNT_SWITCH) break;
+      if (typeof options.onProgress === 'function') options.onProgress(`[Rotasi Akun] Mencoba akun Flow lain (${attempt + 1}/${MAX_ACCOUNT_SWITCH})...`);
+    }
+    return res;
+  };
+}

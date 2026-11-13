@@ -32,6 +32,8 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
 
   const RUNTIME_ROOT = DATA_ROOT || PROJECT_ROOT;
   const SESSIONS_DIR = path.resolve(RUNTIME_ROOT, 'sessions');
+  // File per akun di sessions/akun/<platform>_<username>/ (baca: folder akun dulu, lalu file lama)
+  const af = require('../../core/accountFiles');
   const ACCOUNTS_FILE = path.resolve(SESSIONS_DIR, 'accounts.json');
 
   if (!fs.existsSync(SESSIONS_DIR)) {
@@ -68,7 +70,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       path.resolve(SESSIONS_DIR, `profile_cache_${cleanUser}.json`),
       path.resolve(SESSIONS_DIR, `profile_cache_tiktok_${rawId}.json`),
       path.resolve(SESSIONS_DIR, `profile_cache_tiktok_${cleanId}.json`)
-    ];
+    ].map((p) => af.readPath(p));
 
     for (const cPath of specificCandidates) {
       if (fs.existsSync(cPath)) {
@@ -84,10 +86,11 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
     return null;
   }
 
-  function saveTikTokCachedProfile(accountId, profileData) {
+  function saveTikTokCachedProfile(accountId, profileData, hint = null) {
     try {
       const cleanId = cleanUserIdentifier ? cleanUserIdentifier(accountId) : accountId;
-      const cacheFile = path.resolve(SESSIONS_DIR, `profile_cache_tiktok_${cleanId}.json`);
+      const cacheFile = af.writePath(path.resolve(SESSIONS_DIR, `profile_cache_tiktok_${cleanId}.json`),
+        hint || (profileData?.username ? { platform: 'tiktok', username: profileData.username } : null));
       fs.writeFileSync(cacheFile, JSON.stringify(profileData, null, 2), 'utf-8');
     } catch (e) {}
   }
@@ -336,7 +339,8 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
 
               if (Array.isArray(showcaseProducts) && showcaseProducts.length > 0) {
                 const showcaseFile = path.resolve(SESSIONS_DIR, 'showcase_products.json');
-                const showcaseAccountFile = path.resolve(SESSIONS_DIR, `showcase_products_${cleanId}.json`);
+                const showcaseAccountFile = af.writePath(path.resolve(SESSIONS_DIR, `showcase_products_${cleanId}.json`),
+                  { platform: 'tiktok', username: finalUsername });
                 fs.writeFileSync(showcaseFile, JSON.stringify({ success: true, data: showcaseProducts }, null, 2), 'utf-8');
                 fs.writeFileSync(showcaseAccountFile, JSON.stringify({ success: true, data: showcaseProducts }, null, 2), 'utf-8');
               }
@@ -397,13 +401,15 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
             saveTikTokCachedProfile(cleanId, accountPayload);
 
             // Simpan Cookie TikTok & Sinkronkan langsung ke Sesi Streamer
-            const specificCookie = path.resolve(SESSIONS_DIR, `tiktokshop_cookies_${cleanId}.json`);
+            const ttHint = { platform: 'tiktok', username: finalUsername };
+            const specificCookie = af.writePath(path.resolve(SESSIONS_DIR, `tiktokshop_cookies_${cleanId}.json`), ttHint);
             const defaultCookie = path.resolve(SESSIONS_DIR, 'tiktokshop_cookies.json');
             fs.writeFileSync(specificCookie, JSON.stringify(cookies, null, 2), 'utf-8');
             fs.writeFileSync(defaultCookie, JSON.stringify(cookies, null, 2), 'utf-8');
 
-            const streamerCookieId = path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${cleanId}.json`);
-            const streamerCookieUser = path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${finalUsername}.json`);
+            // satu file streamer_cookies.json di folder akun (dulu ditulis dobel: per id & per username)
+            const streamerCookieId = af.writePath(path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${cleanId}.json`), ttHint);
+            const streamerCookieUser = af.writePath(path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${finalUsername}.json`), ttHint);
             const streamerCookieDefault = path.resolve(SESSIONS_DIR, 'tiktok_streamer_cookies.json');
             fs.writeFileSync(streamerCookieId, JSON.stringify(cookies, null, 2), 'utf-8');
             fs.writeFileSync(streamerCookieUser, JSON.stringify(cookies, null, 2), 'utf-8');
@@ -957,15 +963,219 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       const saved = m.loadHpConfig();
       const device = await m.ensureConnected();   // USB, atau sambung ulang WiFi (pindai jika IP berubah)
       if (!device) return { connected: false, savedIp: saved.ip || '' };
-      const [shopee, tapper, enabled, screen] = await Promise.all([
-        m.hasShopee(device), m.hasTapper(device), m.tapperEnabled(device), m.getScreenSize(device)
+      const [shopee, tapper, tapperState, screen] = await Promise.all([
+        m.hasShopee(device), m.hasTapper(device), m.tapperState(device), m.getScreenSize(device)
       ]);
-      const devs = await m.listDevices();
-      const info = devs.find((d) => d.serial === device) || {};
-      const via = m.isWifiSerial(device) ? 'wifi' : 'usb';
-      return { connected: true, device, via, model: info.model || saved.model || '', shopee, tapper, enabled, screen,
+      if (tapper) await m.whitelistTapperBattery(device);   // cegah dimatikan penghemat baterai
+      const enabled = tapperState === 'ok';
+      const info = m.isTap(device) ? ((await m.tap.info(device)) || {}) : ((await m.listDevices()).find((d) => d.serial === device) || {});
+      const via = m.isTap(device) ? 'tap' : (m.isWifiSerial(device) ? 'wifi' : 'usb');
+      return { connected: true, device, via, model: info.model || saved.model || '', shopee, tapper, enabled, tapperState, screen,
         savedIp: m.loadHpConfig().ip || '' };
     } catch (e) { return { connected: false, error: e.message }; }
+  });
+
+  // --- Unduh Tap Server ke HP lewat WiFi: PC menyajikan APK di jaringan lokal + QR link ---
+  let apkServer = null;
+  let apkServerPort = 0;
+  safeHandle('shopee-tap-apk-link', async () => {
+    try {
+      const apk = tapperApkPath();
+      if (!apk) return { success: false, error: 'File tapper.apk tidak ditemukan.' };
+      const http = require('http');
+      if (!apkServer) {
+        apkServer = http.createServer((req, res) => {
+          if (!/^\/tapper\.apk(\?|$)/.test(req.url || '')) { res.writeHead(404); return res.end('Not found'); }
+          const st = fs.statSync(apk);
+          res.writeHead(200, {
+            'Content-Type': 'application/vnd.android.package-archive',
+            'Content-Length': st.size,
+            'Content-Disposition': 'attachment; filename="TapServer.apk"'
+          });
+          fs.createReadStream(apk).pipe(res);
+        });
+        for (const p of [8790, 8791, 8792, 0]) {
+          const ok = await new Promise((resolve) => {
+            apkServer.once('error', () => resolve(false));
+            apkServer.listen(p, '0.0.0.0', () => resolve(true));
+          });
+          if (ok) { apkServerPort = apkServer.address().port; break; }
+        }
+      }
+      const ips = [];
+      for (const list of Object.values(require('os').networkInterfaces())) {
+        for (const ni of list || []) if (ni.family === 'IPv4' && !ni.internal && /^(10|172|192)\./.test(ni.address)) ips.push(ni.address);
+      }
+      const localUrl = ips.length ? `http://${ips.find((x) => x.startsWith('192.168.')) || ips[0]}:${apkServerPort}/tapper.apk` : '';
+      // Utama: unduh dari server publik (tidak terhalang firewall PC / WiFi pembeli).
+      // ?v=<sidik APK> → tiap APK baru dapat link baru (hindari cache Cloudflare yang basi).
+      const ver = require('crypto').createHash('sha1').update(fs.readFileSync(apk)).digest('hex').slice(0, 10);
+      const url = `https://license.etnicstore.com/updates/tapper.apk?v=${ver}`;
+      const qr = require('qrcode-generator')(0, 'M');
+      qr.addData(url);
+      qr.make();
+      return { success: true, url, localUrl, svg: qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true }) };
+    } catch (e) { return { success: false, error: e.message }; }
+  });
+
+  // --- HP tanpa kabel lewat TAP SERVER (tanpa ADB / Opsi pengembang) ---
+  safeHandle('shopee-tap-discover', async () => {
+    try {
+      const found = await shopeeAdb().tap.discover((message) => notifyLogin({ status: 'info', message }));
+      const saved = require('../../platforms/shopee/phoneStore').loadPhones();
+      return { success: true, phones: found.map((f) => ({ ...f, paired: !!(saved[f.deviceId] && saved[f.deviceId].token) })) };
+    } catch (e) { return { success: false, error: e.message, phones: [] }; }
+  });
+  safeHandle('shopee-tap-pair-code', async (event, code, addr) => {
+    try { return { success: true, ...(await shopeeAdb().tap.pairByCode(code, (message) => notifyLogin({ status: 'info', message }), addr)) }; }
+    catch (e) { return { success: false, error: e.message }; }
+  });
+  safeHandle('shopee-tap-pair', async (event, ip, port, code) => {
+    try { return { success: true, ...(await shopeeAdb().tap.pair(ip, port, code)) }; }
+    catch (e) { return { success: false, error: e.message }; }
+  });
+
+  // --- HP tanpa kabel: Debugging nirkabel Android 11+ (pairing QR / kode 6 digit) ---
+  let wifiPairing = null;   // { name, password, cancelled }
+  safeHandle('shopee-wifi-pair-start', async () => {
+    try {
+      const m = shopeeAdb();
+      if (wifiPairing) wifiPairing.cancelled = true;
+      wifiPairing = { ...m.newQrPairing(), cancelled: false };
+      const qrgen = require('qrcode-generator');
+      const qr = qrgen(0, 'M');
+      qr.addData(wifiPairing.qrText);
+      qr.make();
+      return { success: true, svg: qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true }), name: wifiPairing.name };
+    } catch (e) { return { success: false, error: e.message }; }
+  });
+  safeHandle('shopee-wifi-pair-wait', async () => {
+    const pending = wifiPairing;
+    if (!pending) return { success: false, error: 'Kode QR belum dibuat.' };
+    try {
+      const r = await shopeeAdb().waitQrPairing(pending, (message) => notifyLogin({ status: 'info', message }), 180000, () => pending.cancelled);
+      return { success: true, ...r };
+    } catch (e) { return { success: false, error: e.message, cancelled: pending.cancelled }; }
+  });
+  safeHandle('shopee-wifi-pair-cancel', async () => {
+    if (wifiPairing) wifiPairing.cancelled = true;
+    return { success: true };
+  });
+  safeHandle('shopee-wifi-pair-code', async (event, hostPort, code) => {
+    try { return { success: true, ...(await shopeeAdb().pairWithCode(hostPort, code, (message) => notifyLogin({ status: 'info', message }))) }; }
+    catch (e) { return { success: false, error: e.message }; }
+  });
+
+  // Hubungkan HP Shopee (pengganti login Chrome): akun dibaca LANGSUNG dari app Shopee di HP,
+  // jadi akun yang tampil = akun yang memposting. 1 HP = 1 akun (dikenali nomor seri HP).
+  // Return { ok, step, message, account? }  step: usb | shopee | tapper-install | tapper-enable | done
+  // ---- Profil Shopee dibaca dari HP (beranda kreator) ----
+  const shopeeShotDir = (prof) => af.accountDir({ platform: 'shopee', username: prof.username }, true);
+  function shopeeProfileFields(acc) {
+    const m = shopeeAdb();
+    const out = {
+      biography: acc.bio || '',
+      followingCount: m.parseCount(acc.following),
+      followersCount: m.parseCount(acc.followers),
+      likesCount: m.parseCount(acc.likes),
+      profileReadAt: new Date().toISOString()
+    };
+    if (acc.avatarFile && fs.existsSync(acc.avatarFile)) {
+      const dataUrl = `data:image/png;base64,${fs.readFileSync(acc.avatarFile).toString('base64')}`;
+      out.avatar = dataUrl; out.profilePicUrl = dataUrl;
+    }
+    if (Array.isArray(acc.videos)) {
+      out.posts = acc.videos.map((v, i) => ({ id: `shopee_${i}`, coverLocal: v.coverFile || '', views: m.parseCount(v.views), viewsText: v.views }));
+    }
+    return out;
+  }
+  async function refreshShopeeFromPhone(active) {
+    const m = shopeeAdb();
+    const progress = (message) => notifyLogin({ status: 'info', message });
+    if (!active.shopeeSerialNo) throw new Error('Akun ini belum ditautkan ke HP. Hubungkan HP Shopee dulu.');
+    const device = await m.ensureConnected(active.shopeeSerialNo, progress);
+    if (!device) throw new Error('HP akun ini tidak terhubung. Pastikan HP menyala, di WiFi yang sama, dan Tap Server aktif.');
+    progress('Membaca profil Shopee dari HP (±30 detik)...');
+    const acc = await m.readShopeeAccount(device, progress, { shotDir: shopeeShotDir });
+    await m.screenOff(device).catch(() => {});
+    if (String(acc.username).toLowerCase() !== String(active.username).toLowerCase()) {
+      throw new Error(`HP sedang login sebagai @${acc.username}, bukan @${active.username}.`);
+    }
+    const igSession = igSessionMod();
+    const reg = igSession.getAccountsRegistry();
+    const idx = reg.accounts.findIndex((a) => a.id === active.id);
+    if (idx < 0) throw new Error('Akun tidak ditemukan.');
+    reg.accounts[idx] = { ...reg.accounts[idx], name: acc.name || reg.accounts[idx].name, fullName: acc.name || reg.accounts[idx].fullName, followers: acc.followers || '', ...shopeeProfileFields(acc) };
+    igSession.saveAccountsRegistry(reg);
+    const win = ctx.getMainWindow();
+    if (win && !win.isDestroyed()) win.webContents.send('accounts-updated');
+    return reg.accounts[idx];
+  }
+  const shopeeSessionInfo = (a) => ({
+    isLoggedIn: a.connectMethod === 'hp' ? Boolean(a.shopeeSerialNo) : Boolean(a.profileDir && fs.existsSync(a.profileDir)),
+    activeAccountId: a.id, platform: 'shopee', username: a.username,
+    fullName: a.name || a.username, name: a.name || a.username,
+    category: 'SHOPEE VIDEO',
+    biography: a.biography || '',
+    avatar: a.avatar || '', profilePicUrl: a.avatar || '',
+    followersCount: a.followersCount || 0, followingCount: a.followingCount || 0, likesCount: a.likesCount || 0,
+    phoneModel: a.phoneModel || '', profileReadAt: a.profileReadAt || '',
+    postsCount: (a.posts || []).length, posts: a.posts || []
+  });
+
+  safeHandle('shopee-hp-connect', async () => {
+    const m = shopeeAdb();
+    const progress = (message) => notifyLogin({ status: 'info', message });
+    try {
+      const device = await m.ensureConnected('', progress);
+      if (!device) return { ok: false, step: 'usb', message: 'HP belum terhubung. Pilih "Lewat WiFi" → Cari HP → masukkan kode dari Tap Server. (Atau "Lewat kabel USB".)' };
+      if (!(await m.hasShopee(device))) return { ok: false, step: 'shopee', message: 'App Shopee belum terpasang di HP. Pasang dari Play Store & login dulu.' };
+      if (!(await m.hasTapper(device))) {
+        const apk = tapperApkPath();
+        if (apk) await m.runAdb(`push "${apk}" "/sdcard/Download/tapper.apk"`, device).catch(() => {});
+        return { ok: false, step: 'tapper-install', message: 'Di HP: File Manager → Download → tapper.apk → Pasang. Lalu klik "Cek Lagi".' };
+      }
+      const st = await m.tapperState(device);
+      await m.whitelistTapperBattery(device);
+      if (st !== 'ok') {
+        return { ok: false, step: 'tapper-enable', message: 'Di HP: buka ikon Tap Server → "Buka Aksesibilitas" → aktifkan Tap Server. Lalu klik "Cek Lagi".' };
+      }
+      // tersambung lewat USB → aktifkan WiFi sekalian (supaya kabel boleh dicabut)
+      let serialNo = await m.getSerialNo(device);
+      let model = m.isTap(device)
+        ? ((await m.tap.info(device)) || {}).model || ''
+        : ((await m.listDevices()).find((d) => d.serial === device) || {}).model || '';
+      let wifiNote = '';
+      if (!m.isWifiSerial(device) && !m.isTap(device)) {
+        try { const w = await m.enableWifi(progress, device); wifiNote = ` WiFi aktif (${w.ip}) — kabel boleh dicabut.`; }
+        catch (e) { wifiNote = ' (WiFi belum aktif: tetap pakai kabel USB.)'; }
+      }
+      progress('Membaca akun Shopee dari HP (±30 detik)...');
+      const acc = await m.readShopeeAccount(device, progress, { shotDir: shopeeShotDir });
+      m.savePhone(serialNo, { model, username: acc.username });
+
+      const igSession = igSessionMod();
+      const reg = igSession.getAccountsRegistry();
+      const same = (a) => a.platform === 'shopee' && String(a.username || '').toLowerCase() === acc.username.toLowerCase();
+      const idx = reg.accounts.findIndex(same);
+      const entry = {
+        platform: 'shopee', username: acc.username, name: acc.name || acc.username, fullName: acc.name || acc.username,
+        followers: acc.followers || '', shopeeSerialNo: serialNo, phoneModel: model, connectMethod: 'hp',
+        lastActive: new Date().toISOString(),
+        ...shopeeProfileFields(acc)
+      };
+      // akun lain yang dulu memakai HP ini → lepas tautan HP-nya (1 HP = 1 akun)
+      reg.accounts.forEach((a) => { if (a.platform === 'shopee' && a.shopeeSerialNo === serialNo && !same(a)) a.shopeeSerialNo = ''; });
+      let id;
+      if (idx >= 0) { id = reg.accounts[idx].id; reg.accounts[idx] = { ...reg.accounts[idx], ...entry }; }
+      else { id = `shopee_${acc.username}`; reg.accounts.push({ id, avatar: '', profilePicUrl: '', ...entry }); }
+      if (!reg.activeAccountId) reg.activeAccountId = id;
+      igSession.saveAccountsRegistry(reg);
+      notifyLogin({ status: 'success', message: `Akun Shopee @${acc.username} terhubung lewat HP ${model}.${wifiNote}` });
+      return { ok: true, step: 'done', message: `@${acc.username} terhubung.${wifiNote}`, account: { id, ...entry } };
+    } catch (e) {
+      return { ok: false, step: 'error', message: e.message };
+    }
   });
 
   safeHandle('shopee-adb-enable-wifi', async () => {
@@ -1090,7 +1300,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       const cleanIg = String(username).toLowerCase().replace(/[^a-z0-9._-]/g, '_');
       const igId = `ig_${cleanIg}`;
 
-      const sessionFile = path.join(igSession.SESSIONS_DIR, `instagram_${cleanIg}.json`);
+      const sessionFile = af.writePath(path.join(igSession.SESSIONS_DIR, `instagram_${cleanIg}.json`), { platform: 'instagram', username });
       fs.writeFileSync(sessionFile, JSON.stringify(cookies, null, 2), 'utf-8');
 
       const avatar = profile?.avatar || prev?.avatar || '';
@@ -1129,7 +1339,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       // Cache profil untuk halaman "Profil & Postingan"
       if (profile) {
         try {
-          fs.writeFileSync(path.join(igSession.SESSIONS_DIR, `profile_cache_${cleanIg}.json`), JSON.stringify({
+          fs.writeFileSync(af.writePath(path.join(igSession.SESSIONS_DIR, `profile_cache_${cleanIg}.json`), { platform: 'instagram', username }), JSON.stringify({
             username,
             fullName: entry.fullName || username,
             category: profile.category || 'AKUN BISNIS / KREATOR',
@@ -1215,23 +1425,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       };
     }
 
-    if (active?.platform === 'shopee') {
-      return {
-        isLoggedIn: Boolean(active.profileDir && fs.existsSync(active.profileDir)),
-        activeAccountId: active.id,
-        platform: 'shopee',
-        username: active.username,
-        fullName: active.name || active.username,
-        category: 'SHOPEE VIDEO',
-        biography: 'Akun Shopee untuk posting Shopee Video.',
-        avatar: active.avatar || '',
-        profilePicUrl: active.avatar || '',
-        followersCount: active.followersCount || 0,
-        followingCount: 0,
-        postsCount: 0,
-        posts: []
-      };
-    }
+    if (active?.platform === 'shopee') return shopeeSessionInfo(active);
     if (active?.platform === 'facebook') {
       const fb = loadFacebookAccounts().find((a) => a.id === active.facebookId);
       return {
@@ -1266,11 +1460,14 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
 
   safeHandle('get-user-feed', async () => {
     const active = getActiveAccount();
+    // Belum ada akun → jangan tampilkan feed bawaan/cache lama
+    if (!active || !(igSessionMod().getAccountsRegistry().accounts || []).length) return { success: true, posts: [], profile: null, noAccount: true };
     if (active?.platform === 'tiktok') {
       const fresh = await getTikTokProfileAndFeed(active);
       return { success: true, posts: fresh?.posts || [], profile: fresh?.profile };
     }
-    if (active?.platform === 'facebook' || active?.platform === 'shopee') return { success: true, posts: [], profile: null };
+    if (active?.platform === 'shopee') return { success: true, posts: active.posts || [], profile: shopeeSessionInfo(active) };
+    if (active?.platform === 'facebook') return { success: true, posts: [], profile: null };
     if (active?.platform === 'instagram') {
       const cached = readInstagramCache(active);
       return { success: true, posts: cached?.posts || [], profile: cached };
@@ -1284,7 +1481,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
     try {
       const igSession = require('../../platforms/instagram/sessionManager');
       const clean = String(active?.username || '').toLowerCase().replace(/[^a-z0-9._-]/g, '_');
-      const f = path.join(igSession.SESSIONS_DIR, `profile_cache_${clean}.json`);
+      const f = af.readPath(path.join(igSession.SESSIONS_DIR, `profile_cache_${clean}.json`));
       return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : null;
     } catch (e) { return null; }
   }
@@ -1309,7 +1506,13 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       return { success: true, profile: { username: active.username, fullName: active.name, profilePicUrl: active.avatar, category: 'FACEBOOK PAGE' }, posts: [] };
     }
     if (active?.platform === 'shopee') {
-      return { success: true, profile: { username: active.username, fullName: active.name, profilePicUrl: active.avatar, category: 'SHOPEE VIDEO' }, posts: [] };
+      if (active.connectMethod !== 'hp' || !opts?.force) return { success: true, profile: shopeeSessionInfo(active), posts: active.posts || [] };
+      try {
+        const fresh = await refreshShopeeFromPhone(active);
+        return { success: true, profile: shopeeSessionInfo(fresh), posts: fresh.posts || [] };
+      } catch (e) {
+        return { success: false, error: e.message, profile: shopeeSessionInfo(active), posts: active.posts || [] };
+      }
     }
     if (active?.platform === 'instagram') {
       const fresh = (await refreshInstagramProfile(active)) || readInstagramCache(active);

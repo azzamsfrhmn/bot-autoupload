@@ -5,25 +5,25 @@
     <div class="image-modal-body"><img id="modalFullImage" src="" alt="Full Preview" referrerpolicy="no-referrer"></div>
     <div class="image-modal-footer">
       <span id="modalImageInfo" style="font-size: 12px; color: var(--text-muted);">Pratinjau Gambar</span>
-      <button type="button" id="btnModalUseImage" class="btn-execute" style="width: auto; padding: 8px 18px;">➕ Gunakan ke Jadwal</button>
+      <button type="button" id="btnModalUseImage" class="btn-execute" style="width: auto; padding: 8px 18px;">Gunakan ke Jadwal</button>
     </div>
   </div>
 </div>
 
 <!-- MODAL 2: PREVIEW VIDEO REELS -->
 <div id="videoModal" class="image-modal-backdrop" style="display: none; z-index: 1000;">
-  <div class="image-modal-content" style="max-width: 560px; width: 92%; display: flex; flex-direction: column; background: #101626; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #141d33;">
+  <div class="image-modal-content" style="max-width: 560px; width: 92%; display: flex; flex-direction: column; background: #16181b; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
       <span style="font-weight: 700; font-size: 14px; color: #fff;">Pratinjau Video Reels</span>
       <button type="button" class="btn-close-modal" id="btnCloseVideoModal">✕</button>
     </div>
-    <div style="padding: 16px; display: flex; flex-direction: row; gap: 16px; justify-content: center; align-items: stretch; background: #090d16;">
+    <div style="padding: 16px; display: flex; flex-direction: row; gap: 16px; justify-content: center; align-items: stretch; background: #0e0f11;">
       <div style="width: 260px; min-width: 260px; max-width: 260px; height: 462px; background: #000; border-radius: var(--radius-md); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
         <video id="popupVideoPlayer" controls autoplay style="width: 100%; height: 100%; object-fit: cover; display: block;"></video>
       </div>
       <div id="modalStoryboardPreviewWrapper" style="width: 200px; min-width: 200px; max-width: 200px; height: 462px; display: flex; flex-direction: column; background: #121829; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: var(--radius-md); padding: 10px; box-sizing: border-box; flex-shrink: 0;">
         <div style="font-size: 11px; font-weight: 700; color: #10b981; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px;">
-          <span>🎨</span> Frame Asal
+          <span></span> Frame Asal
         </div>
         <div style="flex: 1; width: 100%; background: #000; border-radius: 6px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); display: flex; align-items: center; justify-content: center;">
           <img id="popupStoryboardImage" style="width: 100%; height: 100%; object-fit: cover; display: block;">
@@ -31,8 +31,8 @@
         <div style="font-size: 10.5px; color: var(--text-dim); margin-top: 8px; line-height: 1.4;">Visual dasar rendering Flow.</div>
       </div>
     </div>
-    <div class="image-modal-footer" style="padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #141d33;">
-      <button type="button" id="btnModalUseVideo" class="btn-execute" style="width: auto; padding: 8px 18px;">➕ Masukkan ke Jadwal</button>
+    <div class="image-modal-footer" style="padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
+      <button type="button" id="btnModalUseVideo" class="btn-execute" style="width: auto; padding: 8px 18px;">Masukkan ke Jadwal</button>
       <button type="button" id="btnOkVideoModal" class="chip-btn" style="padding: 8px 16px;">Tutup</button>
     </div>
   </div>
@@ -88,7 +88,7 @@
         <div style="flex: 1; display: flex; flex-direction: column;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <span class="form-label">Video Prompts</span>
-            <button type="button" id="btnCopyStoryboardModalPrompt" class="chip-btn" style="padding: 2px 8px; font-size: 11px;">📋 Salin Prompt</button>
+            <button type="button" id="btnCopyStoryboardModalPrompt" class="chip-btn" style="padding: 2px 8px; font-size: 11px;">Salin Prompt</button>
           </div>
           <div id="storyboardDetailCaption" style="flex: 1; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px; font-size: 12px; line-height: 1.6; color: var(--text-main); white-space: pre-wrap; overflow-y: auto; max-height: 340px; font-family: monospace;"></div>
         </div>
@@ -102,13 +102,13 @@
 
 <!-- MODAL 5: PILIH GAMBAR DARI GALERI -->
 <div id="imagePickerModal" class="image-modal-backdrop" style="display: none; z-index: 1050; align-items: center; justify-content: center; backdrop-filter: blur(5px);">
-  <div class="image-modal-content" style="max-width: 960px; width: 92%; max-height: 85vh; display: flex; flex-direction: column; background: #101626; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #141d33;">
+  <div class="image-modal-content" style="max-width: 960px; width: 92%; max-height: 85vh; display: flex; flex-direction: column; background: #16181b; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1);">
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
       <h3 style="margin: 0; font-size: 14.5px; font-weight: 700; color: #fff;">Pilih Gambar dari Galeri AI</h3>
       <button type="button" class="btn-close-modal" id="btnCloseImagePickerModal">✕</button>
     </div>
-    <div id="imagePickerGrid" style="padding: 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; flex: 1; background: #090d16; min-height: 250px;"></div>
-    <div style="padding: 12px 20px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #141d33;">
+    <div id="imagePickerGrid" style="padding: 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; flex: 1; background: #0e0f11; min-height: 250px;"></div>
+    <div style="padding: 12px 20px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
       <button type="button" id="btnCancelImagePickerModal" class="chip-btn" style="padding: 7px 18px;">Batal</button>
     </div>
   </div>
@@ -116,35 +116,49 @@
 
 <!-- MODAL 6: PILIH GAMBAR SHOWCASE TIKTOK -->
 <div id="showcasePickerModal" class="image-modal-backdrop" style="display: none; z-index: 1060; align-items: center; justify-content: center; backdrop-filter: blur(10px);">
-  <div class="image-modal-content" style="max-width: 920px; width: 94%; max-height: 88vh; display: flex; flex-direction: column; background: #101626; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12);">
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #141d33;">
+  <div class="image-modal-content" style="max-width: 920px; width: 94%; max-height: 88vh; display: flex; flex-direction: column; background: #16181b; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12);">
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
       <div style="display: flex; align-items: center; gap: 10px;">
         <button type="button" id="btnBackToShowcaseProducts" class="chip-btn" style="display: none; padding: 4px 10px; font-size: 11.5px;">← Kembali</button>
         <h3 id="showcaseModalTitle" style="margin: 0; font-size: 15px; font-weight: 700; color: #fff;">Pilih Produk dari Showcase</h3>
       </div>
       <button type="button" class="btn-close-modal" id="btnCloseShowcasePickerModal">✕</button>
     </div>
-    <div id="showcaseProductsGrid" style="padding: 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; flex: 1; background: #090d16; min-height: 320px;"></div>
-    <div id="showcaseImagesGrid" style="display: none; padding: 18px; overflow-y: auto; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 14px; flex: 1; background: #090d16; min-height: 320px;"></div>
-    <div style="padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #141d33;">
-      <span id="showcaseModalFooterInfo" style="font-size: 11.5px; color: #94a3b8;">Klik produk untuk melihat foto</span>
+    <div id="showcaseProductsGrid" style="padding: 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; flex: 1; background: #0e0f11; min-height: 320px;"></div>
+    <div id="showcaseImagesGrid" style="display: none; padding: 18px; overflow-y: auto; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 14px; flex: 1; background: #0e0f11; min-height: 320px;"></div>
+    <div style="padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
+      <span id="showcaseModalFooterInfo" style="font-size: 11.5px; color: #9d9c97;">Klik produk untuk melihat foto</span>
       <button type="button" id="btnCancelShowcasePickerModal" class="chip-btn" style="padding: 7px 18px;">Batal</button>
     </div>
   </div>
 </div>
 
 <!-- MODAL 7: TAUTKAN KERANJANG KUNING KE JADWAL -->
+<!-- Modal Pemilih Video dari Galeri (halaman Buat Jadwal) -->
+<div id="scheduleVideoPickerModal" class="image-modal-backdrop" style="display: none; z-index: 1070; align-items: center; justify-content: center; backdrop-filter: blur(8px);">
+  <div class="image-modal-content" style="max-width: 900px; width: 94%; max-height: 85vh; display: flex; flex-direction: column; background: #16181b; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12);">
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
+      <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: #fff;">Pilih Video dari Galeri</h3>
+      <button type="button" class="btn-close-modal" id="btnCloseScheduleVideoPickerModal">✕</button>
+    </div>
+    <div id="scheduleVideoPickerGrid" style="padding: 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; flex: 1 1 auto; min-height: 0; align-content: start; grid-auto-rows: max-content; background: #0e0f11; min-height: 320px;"></div>
+    <div style="padding: 12px 20px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
+      <button type="button" id="btnCancelScheduleVideoPickerModal" class="chip-btn" style="padding: 7px 18px;">Batal</button>
+    </div>
+  </div>
+</div>
+
 <div id="scheduleProductPickerModal" class="image-modal-backdrop" style="display: none; z-index: 1070; align-items: center; justify-content: center; backdrop-filter: blur(8px);">
-  <div class="image-modal-content" style="max-width: 900px; width: 94%; max-height: 85vh; display: flex; flex-direction: column; background: #101626; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12);">
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #141d33;">
+  <div class="image-modal-content" style="max-width: 900px; width: 94%; max-height: 85vh; display: flex; flex-direction: column; background: #16181b; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12);">
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
       <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: #fff;">Pilih Produk Showcase (Keranjang Kuning)</h3>
       <button type="button" class="btn-close-modal" id="btnCloseScheduleProductPickerModal">✕</button>
     </div>
     <div style="padding: 12px 20px; background: rgba(255, 255, 255, 0.02); border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
       <input type="text" id="scheduleProductSearchInput" class="input-box" placeholder="Cari nama produk atau PID..." style="width: 100%; height: 36px; font-size: 12px;">
     </div>
-    <div id="scheduleProductPickerGrid" style="padding: 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; flex: 1; background: #090d16; min-height: 320px;"></div>
-    <div style="padding: 12px 20px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #141d33;">
+    <div id="scheduleProductPickerGrid" style="padding: 18px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; flex: 1 1 auto; min-height: 0; align-content: start; grid-auto-rows: max-content; background: #0e0f11; min-height: 320px;"></div>
+    <div style="padding: 12px 20px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255, 255, 255, 0.08); background: #1b1d21;">
       <button type="button" id="btnCancelScheduleProductPickerModal" class="chip-btn" style="padding: 7px 18px;">Batal</button>
     </div>
   </div>

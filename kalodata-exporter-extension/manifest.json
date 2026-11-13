@@ -1,0 +1,70 @@
+{
+  "manifest_version": 3,
+  "name": "Kalodata Product Exporter",
+  "version": "2.8.0",
+  "description": "Ekspor produk Kalodata (akun Anda sendiri) + web Etnic Showcase: tambah / hapus produk etalase TikTok Shop.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Kalodata Product Exporter",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "permissions": [
+    "clipboardWrite",
+    "storage",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://*.kalodata.com/*",
+    "https://shop.tiktok.com/*",
+    "https://license.etnicstore.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.kalodata.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://license.etnicstore.com/showcase/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "injected.js",
+        "icons/icon-32.png"
+      ],
+      "matches": [
+        "*://*.kalodata.com/*"
+      ]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

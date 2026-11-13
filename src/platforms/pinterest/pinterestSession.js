@@ -2,7 +2,7 @@ const { BrowserWindow, session } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-const SESSIONS_DIR = path.join(__dirname, '../../../sessions');
+const SESSIONS_DIR = path.join(process.cwd(), 'sessions');
 const PINTEREST_SESSION_FILE = path.join(SESSIONS_DIR, 'pinterest_session.json');
 
 if (!fs.existsSync(SESSIONS_DIR)) {

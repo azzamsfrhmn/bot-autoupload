@@ -1,6 +1,6 @@
 /**
  * src/platforms/tiktok/tiktokLoginCdp.js
- * Membuka Google Chrome asli berbasis CDP untuk Login Akun TikTok
+ * Membuka Google Chrome asli berbasis CDP untuk Login Akun TikTok (Versi Cepat & Ringan)
  */
 
 const { spawn } = require('child_process');
@@ -36,7 +36,7 @@ function getOriginalChromeExecutablePath() {
 
 function purgeTransientSessionData(profileDir) {
   if (!fs.existsSync(profileDir)) return;
-  ['SingletonLock', 'SingletonCookie', 'SingletonSocket'].forEach((file) => {
+  ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'].forEach((file) => {
     const fPath = path.join(profileDir, file);
     if (fs.existsSync(fPath)) {
       try { fs.unlinkSync(fPath); } catch (e) {}
@@ -44,13 +44,15 @@ function purgeTransientSessionData(profileDir) {
   });
 }
 
-async function openTikTokCdpLogin(accountUsername = 'karuna_id') {
+async function openTikTokCdpLogin(accountUsername = null) {
   const chromePath = getOriginalChromeExecutablePath();
   if (!chromePath) {
     throw new Error('Google Chrome asli tidak ditemukan di komputer.');
   }
 
-  const cleanUsername = String(accountUsername || 'karuna_id').trim().replace(/^@/, '').toLowerCase();
+  const cleanUsername = accountUsername 
+    ? String(accountUsername).trim().replace(/^@/, '').toLowerCase()
+    : `tiktok_${Date.now()}`;
   const profileDir = path.resolve(TIKTOK_PROFILES_DIR, `acc_${cleanUsername}`);
   if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
 
@@ -58,15 +60,20 @@ async function openTikTokCdpLogin(accountUsername = 'karuna_id') {
 
   const cdpPort = 52000 + Math.floor(Math.random() * 5000);
 
+  // Argumen dioptimalkan agar tidak membebani RAM dan CPU saat login
   const chromeArgs = [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
     '--no-first-run',
     '--no-default-browser-check',
+    '--mute-audio',
+    '--disable-background-networking',
+    '--disable-component-update',
+    '--disable-sync',
     '--hide-crash-restore-bubble',
-    '--window-size=1200,900',
-    '--window-position=60,40',
-    'https://www.tiktok.com/tiktokstudio/upload?from=webapp&tab=video'
+    '--window-size=1080,820',
+    '--window-position=80,60',
+    'https://www.tiktok.com/login'
   ];
 
   const chromeProcess = spawn(chromePath, chromeArgs, {

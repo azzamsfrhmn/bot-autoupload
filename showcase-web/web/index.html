@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Etnic Showcase</title>
+  <meta name="description" content="Showcase Produk TikTok Affiliate: etalase akun & katalog riset Kalodata.">
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="style.css?v=202611111841">
+</head>
+<body>
+  <!-- Layar status (ekstensi / lisensi / login TikTok) -->
+  <section id="gate" class="gate">
+    <div class="gate-card">
+      <div class="brand"><span class="brand-mark">E</span> Etnic Showcase</div>
+      <div id="gateBody"><div class="muted">Memeriksa ekstensi...</div></div>
+    </div>
+  </section>
+
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">E</span> Etnic Showcase</div>
+      <div class="top-right">
+        <button class="tt-chip" id="ttAccount" hidden></button>
+        <button class="btn ghost" id="btnLogout" title="Keluar dari lisensi di browser ini">Keluar</button>
+      </div>
+    </header>
+
+    <main class="view">
+      <!-- Kepala halaman (sama seperti menu Showcase Produk di aplikasi) -->
+      <section class="panel head-panel">
+        <div class="head-row">
+          <div>
+            <div class="head-title">Showcase Produk TikTok Affiliate <span class="live-badge">LIVE STREAMER</span></div>
+            <p class="muted head-sub" id="headSub">Sinkronisasi etalase produk aktif dari toko TikTok Shop Streamer resmi dan riset Kalodata.</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn ghost" id="btnSync">⟳ Sinkronkan Etalase</button>
+            <button class="btn ghost" id="btnImport">⤴ Import File</button>
+            <button class="btn danger-ghost" id="btnReset">🗑 Reset Data</button>
+            <input type="file" id="fileImport" accept=".json,application/json" hidden>
+          </div>
+        </div>
+        <div class="mode-tabs">
+          <button class="mode-tab active" data-mode="showcase">Etalase Akun (<b id="tabAccountName">@-</b>)</button>
+          <button class="mode-tab" data-mode="kalodata">Katalog Riset Kalodata <span class="pill" id="countCatalog">0</span></button>
+        </div>
+      </section>
+
+      <!-- Tempel JSON Kalodata (hasil "Salin JSON" ekstensi) -->
+      <section id="jsonBar" class="json-bar" hidden>
+        <input id="jsonInput" type="text" placeholder="Tempel JSON Kalodata di sini (Ctrl + V)..." autocomplete="off" spellcheck="false">
+        <button class="btn grad" id="btnProcessJson">Proses JSON</button>
+      </section>
+
+      <!-- Filter katalog Kalodata -->
+      <section id="filterBar" class="filters" hidden>
+        <input id="fSearch" type="search" placeholder="Cari nama produk / toko / PID...">
+        <select id="fSort">
+          <option value="sale">Terlaris</option>
+          <option value="revenue">Omzet tertinggi</option>
+          <option value="commission">Komisi % tertinggi</option>
+          <option value="commissionRp">Komisi Rp tertinggi</option>
+          <option value="priceAsc">Harga termurah</option>
+          <option value="priceDesc">Harga termahal</option>
+          <option value="newest">Terakhir diambil</option>
+        </select>
+        <label class="fnum">Komisi ≥ <input id="fComm" type="number" min="0" max="100" placeholder="%"></label>
+        <label class="fnum">Harga <input id="fPriceMin" type="number" min="0" placeholder="min"> – <input id="fPriceMax" type="number" min="0" placeholder="maks"></label>
+        <div class="spacer"></div>
+        <span id="selInfo" class="muted"></span>
+        <button class="btn primary" id="btnAddSel" hidden>Add yang dipilih</button>
+      </section>
+
+      <!-- Cari di etalase -->
+      <section id="showcaseBar" class="filters">
+        <input id="sSearch" type="search" placeholder="Cari di etalase (nama / PID)...">
+        <span id="showcaseInfo" class="muted">Belum disinkronkan</span>
+        <button class="btn ghost" id="btnAutoKalo" hidden title="Cari nama produk etalase di halaman Produk Kalodata (latar belakang) lalu ambil grafik &amp; video GMV baris pertama">⇣ Ambil data Kalodata</button>
+      </section>
+
+      <!-- Petunjuk akun Kalodata (untuk grafik & video GMV otomatis) -->
+      <div id="kaloTip" class="kalo-tip" hidden>
+        <div>
+          <b>Grafik &amp; video GMV terisi otomatis dari Kalodata.</b>
+          Login <a href="https://www.kalodata.com/product" target="_blank" rel="noopener">kalodata.com</a> di Chrome ini memakai <b>akun Kalodata biasa yang masa trial-nya sudah selesai</b>.
+          Akun yang <b>masih trial</b> dibatasi 10 pencarian per hari, sehingga data hanya terisi sebagian.
+        </div>
+        <button class="icon-btn" id="kaloTipClose" title="Tutup petunjuk">✕</button>
+      </div>
+
+      <div id="empty" class="empty" hidden></div>
+      <div id="grid" class="grid"></div>
+      <div class="pager" id="pager"></div>
+    </main>
+  </div>
+
+  <!-- Modal (detail produk / pemutar video) -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="modal-head"><div id="modalTitle" class="modal-title"></div><button class="icon-btn" id="modalClose">✕</button></div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js?v=202611111841"></script>
+</body>
+</html>

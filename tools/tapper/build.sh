@@ -16,6 +16,7 @@ echo "[2/6] aapt2 link -> base.apk"
 "$BT/aapt2.exe" link -o "$OUT/base.apk" -I "$AJ" \
   --manifest "$HERE/AndroidManifest.xml" \
   --min-sdk-version 24 --target-sdk-version 30 \
+  --version-code 8 --version-name "2.0.4" \
   "$OUT/res.zip"
 
 echo "[3/6] javac"

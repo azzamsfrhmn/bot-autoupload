@@ -154,7 +154,7 @@ function checkAccountCookies(targetUsername, targetAccountId, isTikTok) {
       path.join(SESSIONS_DIR, `tiktokshop_cookies_${cleanId}.json`),
       path.join(SESSIONS_DIR, 'session_tiktok_karuna_id.json'),
       path.join(SESSIONS_DIR, 'tiktokshop_cookies_karuna_id.json')
-    ];
+    ].map((p) => require('./accountFiles').readPath(p))   // folder akun dulu, lalu file lama;
 
     for (const f of candidates) {
       if (fs.existsSync(f)) {
@@ -238,11 +238,25 @@ async function processPendingSchedulesQueue(mainWindow, showDesktopNotification)
       const links = currentItem.shopeeProductLinks
         || currentItem.productLinks
         || (currentItem.productLink ? [currentItem.productLink] : []);
+      // akun jadwal → HP miliknya (nomor seri) + username untuk dicek di HP (cegah salah akun)
+      let shpAcc = null;
+      try {
+        const reg = require('../platforms/instagram/sessionManager').getAccountsRegistry();
+        shpAcc = (reg.accounts || []).find((a) => a.id === currentItem.accountRef)
+          || (reg.accounts || []).find((a) => a.platform === 'shopee'
+            && String(a.username || '').toLowerCase() === String(currentItem.accountUsername || '').toLowerCase());
+      } catch (e) {}
+      if (shpAcc && shpAcc.connectMethod === 'hp' && !shpAcc.shopeeSerialNo) {
+        sendShopee('failed', `Akun Shopee @${shpAcc.username} belum terhubung ke HP. Buka Kelola Akun → "+ Hubungkan HP Shopee".`);
+        return;
+      }
       sendShopee('running', 'Menyiapkan posting Shopee Video via HP...');
       const res = await postShopeeVideo({
         videoPath: shopeeVideo,
         caption: currentItem.caption || '',
         productLinks: links,
+        serialNo: shpAcc?.shopeeSerialNo || '',
+        expectUsername: shpAcc?.connectMethod === 'hp' ? shpAcc.username : '',
         onProgress: (msg) => sendShopee('running', msg)
       });
       if (res && res.success) sendShopee('success', res.posted ? 'Video Shopee berhasil diposting.' : 'Shopee: siap (berhenti sebelum Posting).');

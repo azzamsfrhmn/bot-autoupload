@@ -3,7 +3,7 @@
     <div class="card-header-left" style="flex: 1; min-width: 260px;">
       <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
         <h2 style="font-size: 18px; font-weight: 700; color: #fff; margin: 0;">Showcase Produk TikTok Affiliate</h2>
-        <span style="font-size: 10.5px; font-weight: 700; background: rgba(37, 99, 235, 0.15); border: 1px solid rgba(37, 99, 235, 0.35); color: #60a5fa; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Live Streamer</span>
+        <span style="font-size: 10.5px; font-weight: 700; background: rgba(53, 178, 159, 0.15); border: 1px solid rgba(53, 178, 159, 0.35); color: #6fcdbd; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Live Streamer</span>
       </div>
       <p style="margin: 0; font-size: 12px; color: var(--text-dim); line-height: 1.5;" id="showcaseSubtitle">
         Sinkronisasi etalase produk aktif dari toko TikTok Shop Streamer resmi dan riset Kalodata.
@@ -11,11 +11,11 @@
     </div>
     
     <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-      <button type="button" id="btnRefreshShowcase" class="chip-btn" style="display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; font-size: 12px; font-weight: 600; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.12); color: #e2e8f0; border-radius: var(--radius-md); cursor: pointer;">
+      <button type="button" id="btnRefreshShowcase" class="chip-btn" style="display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; font-size: 12px; font-weight: 600; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.12); color: #e7e5e0; border-radius: var(--radius-md); cursor: pointer;">
         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         <span>Sinkronkan Etalase</span>
       </button>
-      <button type="button" id="btnLoadKalodataJson" class="chip-btn" style="display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; font-size: 12px; font-weight: 600; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.12); color: #e2e8f0; border-radius: var(--radius-md); cursor: pointer;">
+      <button type="button" id="btnLoadKalodataJson" class="chip-btn" style="display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; font-size: 12px; font-weight: 600; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.12); color: #e7e5e0; border-radius: var(--radius-md); cursor: pointer;">
         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
         <span>Import File</span>
       </button>
@@ -27,26 +27,26 @@
   </div>
 
   <div style="display: flex; gap: 8px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 14px;">
-    <button type="button" id="tabModeTiktokShop" class="chip-btn active" style="display: inline-flex; align-items: center; gap: 7px; padding: 7px 16px; font-size: 12px; font-weight: 600; background: #2563eb; color: #fff; border-color: #2563eb; border-radius: var(--radius-md); cursor: pointer;">
-      <span>🛍️</span><span>Etalase Akun (<strong id="txtActiveAccountName">@karuna_id</strong>)</span>
+    <button type="button" id="tabModeTiktokShop" class="chip-btn active" style="display: inline-flex; align-items: center; gap: 7px; padding: 7px 16px; font-size: 12px; font-weight: 600; background: #35b29f; color: #fff; border-color: #35b29f; border-radius: var(--radius-md); cursor: pointer;">
+      <span></span><span>Etalase Akun (<strong id="txtActiveAccountName">@karuna_id</strong>)</span>
     </button>
     <button type="button" id="tabModeKalodata" class="chip-btn" style="display: inline-flex; align-items: center; gap: 7px; padding: 7px 16px; font-size: 12px; font-weight: 600; background: transparent; color: var(--text-muted); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); cursor: pointer;">
-      <span>📊</span><span>Katalog Riset Kalodata</span>
+      <span></span><span>Katalog Riset Kalodata</span>
     </button>
   </div>
 </div>
 
-<div id="wrapperKalodataInputBar" class="studio-card" style="display: none; margin-bottom: 20px; padding: 14px 18px; background: rgba(124, 58, 237, 0.05); border: 1px dashed rgba(124, 58, 237, 0.35); border-radius: var(--radius-lg); width: 100%; box-sizing: border-box;">
+<div id="wrapperKalodataInputBar" class="studio-card" style="display: none; margin-bottom: 20px; padding: 14px 18px; background: rgba(232, 162, 92, 0.05); border: 1px dashed rgba(232, 162, 92, 0.35); border-radius: var(--radius-lg); width: 100%; box-sizing: border-box;">
   <div style="display: flex; gap: 10px; align-items: center;">
-    <input type="text" id="rawKalodataJsonInput" class="input-box" placeholder="Tempel JSON Kalodata di sini (Ctrl + V)..." style="flex: 1; height: 42px; font-size: 12.5px; padding-left: 14px; background: rgba(10, 14, 26, 0.8); border: 1px solid rgba(124, 58, 237, 0.25); border-radius: var(--radius-md);">
-    <button type="button" id="btnProcessKalodataRawJson" class="btn-execute" style="width: auto; padding: 0 20px; height: 42px; font-size: 12.5px; font-weight: 600; white-space: nowrap; background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%); border-radius: var(--radius-md);">
-      <span>⚡ Ekstrak Produk</span>
+    <input type="text" id="rawKalodataJsonInput" class="input-box" placeholder="Tempel JSON Kalodata di sini (Ctrl + V)..." style="flex: 1; height: 42px; font-size: 12.5px; padding-left: 14px; background: rgba(13, 14, 16, 0.8); border: 1px solid rgba(232, 162, 92, 0.25); border-radius: var(--radius-md);">
+    <button type="button" id="btnProcessKalodataRawJson" class="btn-execute" style="width: auto; padding: 0 20px; height: 42px; font-size: 12.5px; font-weight: 600; white-space: nowrap; background: linear-gradient(135deg, #e8a25c 0%, #2c9a89 100%); border-radius: var(--radius-md);">
+      <span>Ekstrak Produk</span>
     </button>
   </div>
 </div>
 
 <div id="showcaseGridContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px; width: 100%;">
-  <div style="grid-column: 1 / -1; text-align: center; padding: 60px 0; color: var(--text-dim); font-size: 13px;">
+  <div class="app-loader">
     Memuat daftar produk showcase...
   </div>
 </div>

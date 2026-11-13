@@ -54,8 +54,44 @@ export function initTabNavigation() {
     viewAccounts
   ];
 
-  function switchTab(activeTab, activeView) {
+  // ===== Kunci halaman per akun saat BELUM ada akun login =====
+  // Isi halaman asli tidak disentuh — hanya disembunyikan & diganti halaman gembok bersama.
+  // Pengaturan AI & Kelola Akun tetap bisa dibuka.
+  const lockedViews = [viewSchedule, viewAiImage, viewGallery, viewAiVideo, viewVideoGallery, viewShowcase, viewProfile].filter(Boolean);
+  const viewLocked = document.createElement('div');
+  viewLocked.id = 'viewLocked';
+  viewLocked.className = 'view-container';
+  viewLocked.style.display = 'none';
+  viewLocked.innerHTML = `
+    <div style="max-width:520px;margin:90px auto;text-align:center;padding:40px 32px;border:1px solid var(--border-subtle, rgba(255,255,255,0.08));border-radius:16px;background:rgba(255,255,255,0.02)">
+      <div style="width:64px;height:64px;margin:0 auto 18px;border-radius:50%;background:rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      </div>
+      <div style="font-size:18px;font-weight:700;margin-bottom:8px">Halaman terkunci</div>
+      <div style="font-size:13px;opacity:.75;line-height:1.6;margin-bottom:22px">Belum ada akun yang login. Jadwal, gambar, video & galeri tersimpan per akun — silakan login / tambah akun dulu.</div>
+      <button type="button" id="btnLockedLogin" class="btn-execute" style="width:auto;padding:0 22px;height:40px;font-size:13px;font-weight:700">Login / Tambah Akun</button>
+    </div>`;
+  (viewSchedule?.parentElement || document.body).appendChild(viewLocked);
+  viewLocked.querySelector('#btnLockedLogin')?.addEventListener('click', () => {
+    window.dispatchEvent(new Event('open-accounts-view'));
+  });
+  views.push(viewLocked);
+
+  let hasAccount = null;      // null = belum diketahui (jangan kunci dulu)
+  let lastReq = null;         // tab/view yang terakhir diminta pengguna
+  async function refreshAccountLock() {
+    const data = await window.electronAPI?.getAllAccounts?.().catch(() => null);
+    const list = Array.isArray(data) ? data : (data?.accounts || []);
+    const prev = hasAccount;
+    hasAccount = list.length > 0;
+    if (prev !== hasAccount && lastReq) switchTab(lastReq[0], lastReq[1], true);
+  }
+
+  function switchTab(activeTab, activeView, _fromRefresh = false) {
     if (!activeView) return;
+    lastReq = [activeTab, activeView];
+    if (!_fromRefresh) refreshAccountLock();   // cek ulang status akun (mis. baru tambah akun)
+    const locked = hasAccount === false && lockedViews.includes(activeView);
 
     // 1. Nonaktifkan semua status active pada tab sidebar
     tabs.forEach((tab) => {
@@ -74,6 +110,11 @@ export function initTabNavigation() {
     if (activeTab) {
       activeTab.classList.add('active');
     }
+    if (locked) {                       // belum login → tampilkan halaman gembok, jangan muat data
+      viewLocked.classList.add('active-view');
+      viewLocked.style.display = 'block';
+      return;
+    }
     activeView.classList.add('active-view');
     activeView.style.display = 'block';
 
@@ -85,7 +126,7 @@ export function initTabNavigation() {
     } else if (activeView === viewAiVideo || activeView === viewVideoGallery) {
       // Sinkronkan form Reels sesuai platform aktif (Instagram vs TikTok Showcase)
       window.electronAPI?.getSessionInfo?.().then((session) => {
-        const isTikTok = session?.platform === 'tiktok';
+        const isTikTok = true; // Semua platform memakai alur Pilih Konsep video (dulu Instagram punya form sendiri)
 
         const containerIg = document.getElementById('containerInstagramVideoForm');
         const containerTt = document.getElementById('containerTikTokVideoForm');
@@ -128,10 +169,8 @@ export function initTabNavigation() {
   sidebarAiBadge?.addEventListener('click', () => switchTab(tabAiSettings, viewAiSettings));
 
   // Klik badge profil di sidebar bawah membuka halaman kelola multi-akun
-  btnSidebarProfile?.addEventListener('click', (event) => {
-    if (event.target.closest('#btnLogout')) return;
-    switchTab(null, viewAccounts);
-  });
+  // Badge profil kini membuka pemilih akun (accountSwitcher.js); menu "Kelola Akun" memicu event ini
+  window.addEventListener('open-accounts-view', () => switchTab(null, viewAccounts));
 
   // Tampilan awal saat aplikasi pertama kali dimuat
   switchTab(tabSchedule, viewSchedule);

@@ -68,9 +68,9 @@ main.main-viewport::-webkit-scrollbar-thumb:hover {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  padding: 28px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-  margin-bottom: 24px;
+  padding: 24px;
+  box-shadow: none;
+  margin-bottom: 20px;
 }
 
 .card-header-row {
@@ -81,10 +81,10 @@ main.main-viewport::-webkit-scrollbar-thumb:hover {
 }
 
 .card-header-left h2 {
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
-  color: #fff;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+  color: var(--text-main);
 }
 
 .card-header-left p {
@@ -98,9 +98,9 @@ main.main-viewport::-webkit-scrollbar-thumb:hover {
   font-size: 11.5px;
   padding: 4px 10px;
   border-radius: 20px;
-  background: rgba(16, 185, 129, 0.08);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  color: #34d399;
+  background: var(--accent-2-soft);
+  border: 1px solid rgba(232, 162, 92, 0.25);
+  color: var(--accent-2-text);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -134,10 +134,10 @@ main.main-viewport::-webkit-scrollbar-thumb:hover {
 }
 
 .mode-btn.active {
-  background: var(--bg-card);
-  color: #fff;
-  border: 1px solid var(--border-subtle);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  background: var(--bg-card-hover);
+  color: var(--text-main);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
 }
 
 /* Form Group & Input */
@@ -153,11 +153,9 @@ main.main-viewport::-webkit-scrollbar-thumb:hover {
 }
 
 .form-label {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .form-hint {
@@ -170,8 +168,8 @@ main.main-viewport::-webkit-scrollbar-thumb:hover {
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  color: #fff;
-  padding: 12px 14px;
+  color: var(--text-main);
+  padding: 11px 13px;
   font-size: 13.5px;
   transition: var(--transition);
   outline: none;
@@ -180,7 +178,7 @@ main.main-viewport::-webkit-scrollbar-thumb:hover {
 
 .input-box:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 textarea.input-box {
@@ -214,9 +212,9 @@ textarea.input-box {
 }
 
 .chip-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--accent-2-soft);
+  color: var(--accent-2-text);
+  border-color: rgba(232, 162, 92, 0.3);
 }
 
 /* Form Grid */
@@ -256,8 +254,8 @@ textarea.input-box {
 .btn-execute {
   width: 100%;
   padding: 13px 20px;
-  background: var(--accent-gradient);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--accent-primary);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: #fff;
   font-size: 14px;
@@ -267,14 +265,14 @@ textarea.input-box {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  box-shadow: 0 4px 16px var(--accent-glow);
+  box-shadow: none;
   transition: var(--transition);
   box-sizing: border-box;
 }
 
 .btn-execute:hover {
-  filter: brightness(1.1);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35);
+  filter: none;
+  background: var(--accent-hover);
 }
 
 .btn-execute:active {
@@ -311,9 +309,7 @@ textarea.input-box {
 .image-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(5, 8, 15, 0.82);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(8, 9, 10, 0.78);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -373,7 +369,7 @@ textarea.input-box {
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #e2e8f0;
+  color: #e7e5e0;
   font-size: 18px;
   display: flex;
   align-items: center;
@@ -450,4 +446,53 @@ textarea.input-box {
   border-top: 1px solid var(--border-subtle) !important;
   display: flex !important;
   justify-content: flex-end !important;
+}
+
+/* =========================================================================
+   PERBAIKAN FULLSCREEN & PREVIEW ZOOM UNTUK VIDEO & GAMBAR 9:16
+   ========================================================================= */
+
+/* Menjaga rasio aspek utuh saat fullscreen browser/Chromium */
+video:fullscreen,
+video:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  object-fit: contain !important;
+  background-color: #000000 !important;
+}
+
+img:fullscreen,
+img:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  object-fit: contain !important;
+  background-color: #000000 !important;
+}
+
+/* Pratinjau Video Reels di dalam Modal */
+.modal-video-preview,
+.video-preview-wrapper,
+div[id*="videoPreview" i],
+div[id*="reelsPreview" i] {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background-color: #000000 !important;
+  overflow: hidden !important;
+  border-radius: var(--radius-md);
+}
+
+/* Pastikan video dan kanvas pratinjau tidak ter-crop (cover) */
+.modal-video-preview video,
+.video-preview-wrapper video,
+div[id*="videoPreview" i] video,
+div[id*="reelsPreview" i] video,
+.modal-preview-content video,
+#reelsPreviewModal video,
+#videoPreviewModal video,
+video {
+  max-width: 100% !important;
+  max-height: 70vh !important;
+  object-fit: contain !important;
+  background-color: #000000 !important;
 }

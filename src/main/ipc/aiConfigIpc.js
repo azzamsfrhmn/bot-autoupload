@@ -4,24 +4,25 @@
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { chromium } = require('playwright');
+
+// API Key Gemini Permanen (sumber tunggal di aiCaption.js)
+const { HARDCODED_GEMINI_API_KEY } = require('../../services/aiCaption');
 
 module.exports = function registerAiConfigIpc(ipcMain, ctx) {
   const {
     PROJECT_ROOT,
+    DATA_ROOT,
     generateInstagramCaption,
     testGeminiConnection,
-    getSavedApiKey,
     isPinterestLoggedIn,
     openPinterestLoginWindow,
-    getOriginalChromeExecutablePath,
-    getTikTokProfileDir
+    getOriginalChromeExecutablePath
   } = ctx;
 
-  const SESSIONS_DIR = path.resolve(PROJECT_ROOT, 'sessions');
-  const ACCOUNTS_FILE = path.resolve(SESSIONS_DIR, 'accounts.json');
+  const RUNTIME_ROOT = DATA_ROOT || PROJECT_ROOT;
+  const SESSIONS_DIR = path.resolve(RUNTIME_ROOT, 'sessions');
+  const CHATGPT_SHARED_PROFILE = path.resolve(SESSIONS_DIR, 'chatgpt_profile_shared');
 
-  // Helper agar tidak terjadi error "Attempted to register a second handler"
   function safeHandle(channel, handler) {
     try {
       ipcMain.removeHandler(channel);
@@ -29,103 +30,113 @@ module.exports = function registerAiConfigIpc(ipcMain, ctx) {
     ipcMain.handle(channel, handler);
   }
 
-  function getActiveAccountInfo() {
-    let activeId = '';
-    let activeUsername = '';
-
-    if (fs.existsSync(ACCOUNTS_FILE)) {
-      try {
-        const raw = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf-8'));
-        const accList = Array.isArray(raw) ? raw : (raw.accounts || []);
-        activeId = raw.activeAccountId || raw.activeId || '';
-        const activeAcc = accList.find((a) => a.id === activeId) || accList[0];
-        if (activeAcc) {
-          activeId = activeAcc.id || activeId;
-          activeUsername = (activeAcc.username || '').replace(/^@/, '').toLowerCase();
-        }
-      } catch (e) {}
-    }
-    return { activeId, activeUsername };
+  function purgeLocks(profileDir) {
+    if (!fs.existsSync(profileDir)) return;
+    ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'].forEach((f) => {
+      const p = path.join(profileDir, f);
+      if (fs.existsSync(p)) {
+        try { fs.unlinkSync(p); } catch (e) {}
+      }
+    });
   }
 
-  function checkTikTokStreamerSession() {
-    const { activeId, activeUsername } = getActiveAccountInfo();
+  function hasActualChatGptSession(profileDir) {
+    if (!profileDir || !fs.existsSync(profileDir)) return false;
 
-    // 1. Cek seluruh variasi file cookie streamer / tiktokshop
-    const candidateFiles = [
-      activeId ? path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${activeId}.json`) : null,
-      activeUsername ? path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${activeUsername}.json`) : null,
-      activeId ? path.resolve(SESSIONS_DIR, `tiktokshop_cookies_${activeId}.json`) : null,
-      activeUsername ? path.resolve(SESSIONS_DIR, `tiktokshop_cookies_${activeUsername}.json`) : null,
-      path.resolve(SESSIONS_DIR, 'tiktok_streamer_cookies.json'),
-      path.resolve(SESSIONS_DIR, 'tiktokshop_cookies.json')
-    ].filter(Boolean);
+    const cookieDbCandidates = [
+      path.join(profileDir, 'Default', 'Network', 'Cookies'),
+      path.join(profileDir, 'Network', 'Cookies')
+    ];
 
-    // Cari juga file dinamis yang cocok di folder sessions/
-    if (fs.existsSync(SESSIONS_DIR)) {
-      try {
-        const dynamicFiles = fs.readdirSync(SESSIONS_DIR)
-          .filter((f) => (f.startsWith('tiktokshop_cookies_') || f.startsWith('tiktok_streamer_cookies_')) && f.endsWith('.json'))
-          .map((f) => path.resolve(SESSIONS_DIR, f));
-        candidateFiles.push(...dynamicFiles);
-      } catch (e) {}
-    }
-
-    for (const cPath of candidateFiles) {
-      if (fs.existsSync(cPath)) {
+    for (const dbPath of cookieDbCandidates) {
+      if (fs.existsSync(dbPath)) {
         try {
-          const raw = fs.readFileSync(cPath, 'utf-8');
-          const cookies = JSON.parse(raw);
-          if (Array.isArray(cookies) && cookies.length > 0) {
-            const hasAuth = cookies.some((c) => {
-              const name = String(c.name || '').toLowerCase();
-              return (
-                name.includes('sessionid') ||
-                name.includes('sid_') ||
-                name.includes('streamer') ||
-                name === 'passport_csrf_token'
-              );
-            });
-
-            if (hasAuth) {
-              // Jika file tiktokshop_cookies valid, otomatis sinkronkan salinan tiktok_streamer_cookies
-              try {
-                const streamerById = path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${activeId}.json`);
-                if (!fs.existsSync(streamerById) && activeId) {
-                  fs.writeFileSync(streamerById, JSON.stringify(cookies, null, 2), 'utf-8');
-                }
-              } catch (err) {}
+          const stat = fs.statSync(dbPath);
+          if (stat.size > 28672) {
+            const buf = fs.readFileSync(dbPath);
+            if (
+              buf.includes(Buffer.from('session-token')) ||
+              buf.includes(Buffer.from('__Secure-next-auth')) ||
+              buf.includes(Buffer.from('oai-did'))
+            ) {
               return true;
             }
           }
         } catch (e) {}
       }
     }
-
-    // 2. Deteksi direktori profil browser Chrome TikTok yang sedang login
-    const chromeProfileDir = path.resolve(SESSIONS_DIR, 'tiktok_profiles');
-    if (fs.existsSync(chromeProfileDir)) {
-      try {
-        const subDirs = fs.readdirSync(chromeProfileDir);
-        for (const sub of subDirs) {
-          const cookieDb = path.join(chromeProfileDir, sub, 'Default', 'Network', 'Cookies');
-          const altCookieDb = path.join(chromeProfileDir, sub, 'Network', 'Cookies');
-          if (fs.existsSync(cookieDb) || fs.existsSync(altCookieDb)) return true;
-        }
-      } catch (e) {}
-    }
-
     return false;
   }
 
-  // --- Konfigurasi Dasar AI ---
-  safeHandle('get-ai-config', async () => ({ geminiApiKey: getSavedApiKey() }));
+  function checkChatGptSessionStatus() {
+    const isSharedActive = hasActualChatGptSession(CHATGPT_SHARED_PROFILE);
+    const isLegacyActive =
+      hasActualChatGptSession(path.resolve(SESSIONS_DIR, 'chatgpt_profile_w1')) ||
+      hasActualChatGptSession(path.resolve(SESSIONS_DIR, 'chatgpt_video_profile_w1')) ||
+      hasActualChatGptSession(path.resolve(SESSIONS_DIR, 'chatgpt_video_profile'));
 
-  safeHandle('save-ai-config', async (event, { geminiApiKey }) => {
+    const isActive = Boolean(isSharedActive || isLegacyActive);
+
+    return {
+      isLoggedIn: isActive,
+      w1: isActive,
+      videoW1: isActive
+    };
+  }
+
+  function openChatGptWindow(targetUrl = 'https://chatgpt.com') {
+    const chromePath = typeof getOriginalChromeExecutablePath === 'function'
+      ? getOriginalChromeExecutablePath()
+      : null;
+
+    if (!chromePath) throw new Error('Google Chrome tidak ditemukan di sistem.');
+
+    if (!fs.existsSync(CHATGPT_SHARED_PROFILE)) {
+      fs.mkdirSync(CHATGPT_SHARED_PROFILE, { recursive: true });
+    }
+
+    purgeLocks(CHATGPT_SHARED_PROFILE);
+
+    const cdpPort = 54200 + Math.floor(Math.random() * 3000);
+    const args = [
+      `--remote-debugging-port=${cdpPort}`,
+      `--user-data-dir=${CHATGPT_SHARED_PROFILE}`,
+      '--hide-crash-restore-bubble', // jangan munculkan "Restore pages?" (Chrome bot ditutup paksa)
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--window-size=1280,900',
+      targetUrl
+    ];
+
+    const proc = spawn(chromePath, args, { detached: false, stdio: 'ignore' });
+
+    const checkTimer = setInterval(() => {
+      if (proc.killed) {
+        clearInterval(checkTimer);
+        return;
+      }
+      if (hasActualChatGptSession(CHATGPT_SHARED_PROFILE)) {
+        const win = ctx.getMainWindow ? ctx.getMainWindow() : null;
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('check-ai-status');
+        }
+      }
+    }, 4000);
+
+    return { success: true, port: cdpPort };
+  }
+
+  // --- Konfigurasi Dasar Gemini Permanen ---
+  safeHandle('get-ai-config', async () => ({
+    geminiApiKey: '••••••••••••••••••••••••••••••••••••••••',
+    isPermanent: true
+  }));
+
+  safeHandle('save-ai-config', async () => {
     try {
-      const cfgPath = path.join(PROJECT_ROOT, 'sessions/config.json');
+      const cfgPath = path.join(SESSIONS_DIR, 'config.json');
       let current = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) : {};
-      if (geminiApiKey !== undefined) current.geminiApiKey = geminiApiKey.trim();
+      current.geminiApiKey = HARDCODED_GEMINI_API_KEY;
       fs.writeFileSync(cfgPath, JSON.stringify(current, null, 2), 'utf-8');
       return { success: true };
     } catch (err) {
@@ -133,124 +144,75 @@ module.exports = function registerAiConfigIpc(ipcMain, ctx) {
     }
   });
 
-  safeHandle('test-ai-connection', async (e, key) => testGeminiConnection(key));
+  // Handler Headless Global untuk Pengaturan AI
+  safeHandle('save-ai-headless-config', async (e, isHeadless) => {
+    try {
+      const flowProfilesDir = path.resolve(RUNTIME_ROOT, 'sessions/flow_profiles');
+      if (!fs.existsSync(flowProfilesDir)) fs.mkdirSync(flowProfilesDir, { recursive: true });
+      const cfgPath = path.join(flowProfilesDir, 'accounts_config.json');
+
+      let current = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) : {};
+      current.headless = Boolean(isHeadless);
+      fs.writeFileSync(cfgPath, JSON.stringify(current, null, 2), 'utf-8');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  safeHandle('get-ai-headless-config', async () => {
+    try {
+      const cfgPath = path.resolve(RUNTIME_ROOT, 'sessions/flow_profiles/accounts_config.json');
+      if (fs.existsSync(cfgPath)) {
+        const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        return { headless: Boolean(raw.headless) };
+      }
+    } catch (e) {}
+    return { headless: false };
+  });
+
+  safeHandle('test-ai-connection', async () => {
+    if (typeof testGeminiConnection === 'function') {
+      return testGeminiConnection(HARDCODED_GEMINI_API_KEY);
+    }
+    return { success: true, message: 'Gemini siap & terhubung (Permanen Aktif)' };
+  });
 
   safeHandle('generate-caption', async (e, data) => {
     try {
-      const caption = await generateInstagramCaption(data.prompt, data.tone, data.mediaFiles);
+      const caption = await generateInstagramCaption(data.prompt, data.tone, data.mediaFiles, data.platform);
       return { success: true, caption };
     } catch (err) {
       return { success: false, error: err.message };
     }
   });
 
-  safeHandle('get-pinterest-status', async () => ({ isLoggedIn: isPinterestLoggedIn() }));
+  // --- Pinterest ---
+  safeHandle('get-pinterest-status', async () => ({
+    isLoggedIn: typeof isPinterestLoggedIn === 'function' ? isPinterestLoggedIn() : false
+  }));
+
   safeHandle('login-pinterest', async () => {
     const win = ctx.getMainWindow ? ctx.getMainWindow() : null;
     return new Promise((resolve) => openPinterestLoginWindow(win, resolve));
   });
 
-  safeHandle('get-chatgpt-status', async () => ({
-    w1: true,
-    w2: true,
-    videoW1: true,
-    videoW2: true
-  }));
-
-  // --- Handler Pengecekan Status Streamer Terpadu ---
-  safeHandle('get-tiktok-streamer-status', async () => {
-    return { success: true, isLoggedIn: checkTikTokStreamerSession() };
+  // --- ChatGPT: Satu Sesi Bersama Terpadu ---
+  safeHandle('get-chatgpt-status', async () => {
+    return checkChatGptSessionStatus();
   });
 
-  safeHandle('get-tiktokshop-status', async () => {
-    return { success: true, isLoggedIn: checkTikTokStreamerSession() };
-  });
-
-  // --- Handler Login & Otomatis Simpan File Cookie Streamer ---
-  safeHandle('login-tiktok-streamer', async () => {
+  safeHandle('open-chatgpt-login', async () => {
     try {
-      const chromePath = typeof getOriginalChromeExecutablePath === 'function'
-        ? getOriginalChromeExecutablePath()
-        : null;
+      return openChatGptWindow('https://chatgpt.com');
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
 
-      if (!chromePath) throw new Error('Google Chrome tidak ditemukan di sistem.');
-
-      const { activeId, activeUsername } = getActiveAccountInfo();
-      const targetUser = activeId || activeUsername || 'karuna_id';
-
-      const profileDir = typeof getTikTokProfileDir === 'function'
-        ? getTikTokProfileDir(targetUser)
-        : path.resolve(SESSIONS_DIR, `tiktok_profiles/acc_${targetUser}`);
-
-      if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
-
-      const cdpPort = 54100 + Math.floor(Math.random() * 4000);
-      const args = [
-        `--remote-debugging-port=${cdpPort}`,
-        `--user-data-dir=${profileDir}`,
-        '--remote-allow-origins=*',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--window-size=1280,900',
-        'https://shop.tiktok.com/streamer/showcase/product/list'
-      ];
-
-      const chromeProc = spawn(chromePath, args, { detached: false, stdio: 'ignore' });
-
-      // Latar belakang: Ekstrak cookie otomatis begitu browser siap
-      (async () => {
-        let browser = null;
-        for (let i = 0; i < 35; i++) {
-          await new Promise((r) => setTimeout(r, 1000));
-          try {
-            browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-            if (browser) break;
-          } catch (e) {}
-        }
-        if (!browser) return;
-
-        const checkInterval = setInterval(async () => {
-          if (!chromeProc || chromeProc.killed) {
-            clearInterval(checkInterval);
-            return;
-          }
-
-          try {
-            const context = browser.contexts()[0];
-            if (!context) return;
-
-            const cookies = await context.cookies([
-              'https://shop.tiktok.com',
-              'https://www.tiktok.com',
-              'https://creator.tiktokshop.com'
-            ]);
-
-            const hasSession = cookies.some((c) => {
-              const n = String(c.name || '').toLowerCase();
-              return n.includes('sessionid') || n.includes('sid_') || n.includes('streamer');
-            });
-
-            if (hasSession && cookies.length > 0) {
-              const nameById = path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${activeId}.json`);
-              const nameByUser = path.resolve(SESSIONS_DIR, `tiktok_streamer_cookies_${activeUsername || 'sherlylovyou_id'}.json`);
-              const defaultStreamer = path.resolve(SESSIONS_DIR, 'tiktok_streamer_cookies.json');
-              const defaultShop = path.resolve(SESSIONS_DIR, 'tiktokshop_cookies.json');
-
-              fs.writeFileSync(nameById, JSON.stringify(cookies, null, 2), 'utf-8');
-              fs.writeFileSync(nameByUser, JSON.stringify(cookies, null, 2), 'utf-8');
-              fs.writeFileSync(defaultStreamer, JSON.stringify(cookies, null, 2), 'utf-8');
-              fs.writeFileSync(defaultShop, JSON.stringify(cookies, null, 2), 'utf-8');
-
-              const win = ctx.getMainWindow ? ctx.getMainWindow() : null;
-              if (win && !win.isDestroyed()) {
-                win.webContents.send('check-ai-status');
-              }
-            }
-          } catch (e) {}
-        }, 3000);
-      })().catch(() => {});
-
-      return { success: true, port: cdpPort };
+  safeHandle('open-chatgpt-video-login', async () => {
+    try {
+      return openChatGptWindow('https://chatgpt.com');
     } catch (err) {
       return { success: false, error: err.message };
     }

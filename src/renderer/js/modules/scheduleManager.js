@@ -7,6 +7,8 @@ let selectedMediaFiles = [];
 let currentSchedulesCache = [];
 let loadedShowcaseProducts = [];
 
+import { videoThumbHtml, hydrateVideoThumbs } from './videoThumbs.js';
+
 export function getSelectedMediaFiles() {
   return selectedMediaFiles;
 }
@@ -728,7 +730,7 @@ export function initScheduleManager() {
       card.style.cssText = 'background: #1b1d20; border: 2px solid rgba(255, 255, 255, 0.08); border-radius: 10px; overflow: hidden; cursor: pointer; transition: transform 0.15s ease, border-color 0.15s ease; display: flex; flex-direction: column;';
       card.innerHTML = `
         <div style="position: relative; width: 100%; aspect-ratio: 9/16; background: #000; overflow: hidden; flex-shrink: 0;">
-          <video src="${getFileUrl(filePath)}" ${poster ? `poster="${getFileUrl(poster)}"` : ''} preload="metadata" muted style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;"></video>
+          ${videoThumbHtml(filePath, poster, 'width:100%;height:100%;object-fit:cover;pointer-events:none;display:block;')}
           ${postBadge(filePath)}
         </div>
         <div style="padding: 8px 10px; display: flex; flex-direction: column; gap: 2px;">
@@ -736,9 +738,23 @@ export function initScheduleManager() {
           <div style="font-size: 10px; color: var(--text-dim);">${v.createdDate || ''}</div>
         </div>
       `;
-      const videoEl = card.querySelector('video');
-      card.onmouseenter = () => { card.style.borderColor = '#35b29f'; card.style.transform = 'translateY(-2px)'; videoEl?.play().catch(() => {}); };
-      card.onmouseleave = () => { card.style.borderColor = 'rgba(255, 255, 255, 0.08)'; card.style.transform = 'translateY(0)'; videoEl?.pause(); };
+      // Pratinjau saat hover: <video> dibuat hanya saat kursor masuk & dibuang saat keluar
+      // (dulu tiap kartu punya <video> → terlalu banyak pemutar, sebagian hitam & tak bisa diputar)
+      const mediaBox = card.firstElementChild;
+      let hoverVideo = null;
+      card.onmouseenter = () => {
+        card.style.borderColor = '#35b29f'; card.style.transform = 'translateY(-2px)';
+        hoverVideo = document.createElement('video');
+        hoverVideo.src = getFileUrl(filePath);
+        hoverVideo.muted = true; hoverVideo.loop = true; hoverVideo.playsInline = true;
+        hoverVideo.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;';
+        mediaBox.appendChild(hoverVideo);
+        hoverVideo.play().catch(() => {});
+      };
+      card.onmouseleave = () => {
+        card.style.borderColor = 'rgba(255, 255, 255, 0.08)'; card.style.transform = 'translateY(0)';
+        if (hoverVideo) { hoverVideo.pause(); hoverVideo.removeAttribute('src'); hoverVideo.load(); hoverVideo.remove(); hoverVideo = null; }
+      };
       card.onclick = () => {
         // Satu postingan video: pilihan galeri menggantikan media sebelumnya
         selectedMediaFiles = [filePath];
@@ -748,6 +764,7 @@ export function initScheduleManager() {
       };
       videoPickerGrid.appendChild(card);
     });
+    hydrateVideoThumbs(videoPickerGrid);
   });
 
   dropzonePicker?.addEventListener('click', async () => {

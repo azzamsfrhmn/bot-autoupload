@@ -1,9 +1,9 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const { loadSessionFromFile, getActiveAccount } = require('./sessionManager');
+const { loadSessionFromFile, loadInstagramSession, getActiveAccount } = require('./sessionManager');
 
-const SESSIONS_DIR = path.join(__dirname, '../../../sessions');
+const SESSIONS_DIR = path.join(process.cwd(), 'sessions');
 const DEFAULT_SESSION_FILE = path.join(SESSIONS_DIR, 'instagram_session.json');
 
 let isUploading = false;
@@ -101,10 +101,132 @@ async function dismissInstagramModals(page) {
   } catch (e) {}
 }
 
+// ---------------------------------------------------------------------------
+// Jadwal bawaan Instagram ("Schedule content") & saklar "Share to Facebook"
+// ---------------------------------------------------------------------------
+// Instagram: jadwal minimal 20 menit dari sekarang → 22 menit (cadangan waktu proses)
+const IG_SCHEDULE_MIN_LEAD_MS = 22 * 60 * 1000;
+
+// Saklar (input checkbox) pada baris yang memuat teks tertentu di dialog posting
+async function setDialogSwitch(page, textRe, wantOn) {
+  return page.evaluate(({ src, wantOn }) => {
+    const re = new RegExp(src, 'i');
+    const dialog = document.querySelector('div[role="dialog"]') || document.body;
+    const boxes = Array.from(dialog.querySelectorAll('input[type="checkbox"]'));
+    for (const box of boxes) {
+      let row = box.parentElement;
+      for (let i = 0; i < 6 && row; i++) {
+        if (re.test(row.innerText || '')) break;
+        row = row.parentElement;
+      }
+      if (!row || !re.test(row.innerText || '')) continue;
+      // Baris harus milik saklar ini saja (bukan bagian besar yang memuat beberapa saklar)
+      if (row.querySelectorAll('input[type="checkbox"]').length > 1) continue;
+      if (box.checked !== wantOn) box.click();
+      return { found: true, checked: box.checked };
+    }
+    return { found: false };
+  }, { src: textRe.source, wantOn });
+}
+
+async function setInstagramSchedule(page, targetMs, onProgress = () => {}) {
+  const want = await page.evaluate((ms) => {
+    const t = new Date(ms);
+    const h = t.getHours();
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return {
+      y: t.getFullYear(), m: t.getMonth(), d: t.getDate(),
+      monthLabel: `${months[t.getMonth()]} ${t.getFullYear()}`,
+      h12: h % 12 === 0 ? 12 : h % 12, min: t.getMinutes(), pm: h >= 12,
+      label: `${String(t.getDate()).padStart(2, '0')}/${String(t.getMonth() + 1).padStart(2, '0')}/${t.getFullYear()} ${String(h).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+    };
+  }, targetMs);
+
+  // 1. Nyalakan "Schedule content"
+  const sw = await setDialogSwitch(page, /schedule content|jadwalkan konten/, true);
+  if (!sw.found) return { ok: false, reason: 'saklar Schedule content tidak ditemukan' };
+  await sleep(1500);
+
+  // 2. Tanggal: buka kalender → geser bulan → klik hari
+  if (process.env.IG_DEBUG_POPUP) await page.screenshot({ path: process.env.IG_DEBUG_POPUP }).catch(() => {});
+  // Klik lewat script: popup notifikasi Instagram bisa menutupi tombol (klik mouse tertahan)
+  const openedCal = await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('div[role="dialog"] [role="button"]'))
+      .find((e) => /\b\d{4}$/.test((e.innerText || '').trim()));
+    if (!btn) return false;
+    btn.scrollIntoView({ block: 'center' });
+    btn.click();
+    return true;
+  });
+  if (!openedCal) return { ok: false, reason: 'tombol tanggal jadwal tidak ditemukan' };
+  await sleep(1200);
+  const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+  for (let i = 0; i < 4; i++) {
+    const head = await page.evaluate(() => {
+      const el = Array.from(document.querySelectorAll('span, div, h1, h2, h3')).find((e) => e.children.length === 0
+        && /^(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}$/i.test((e.innerText || '').trim()));
+      return el ? el.innerText.trim() : '';
+    });
+    const hm = head.match(/^(\w+)\s+(\d{4})$/);
+    if (!hm) return { ok: false, reason: 'kalender jadwal tidak terbaca' };
+    const diff = (want.y - Number(hm[2])) * 12 + (want.m - monthNames.indexOf(hm[1].toLowerCase()));
+    if (diff === 0) break;
+    await page.evaluate((lbl) => document.querySelector(`[aria-label="${lbl}"]`)?.click(), diff > 0 ? 'Next month' : 'Previous month');
+    await sleep(800);
+  }
+  const dayClicked = await page.evaluate((d) => {
+    const cell = Array.from(document.querySelectorAll('[role="gridcell"]'))
+      .find((e) => (e.innerText || '').trim() === String(d) && e.getAttribute('aria-disabled') !== 'true');
+    if (!cell) return false;
+    cell.click();
+    return true;
+  }, want.d);
+  if (!dayClicked) return { ok: false, reason: `tanggal ${want.label} tidak bisa dipilih di Instagram (di luar batas jadwal)` };
+  await sleep(1000);
+
+  // 3. Jam (1–12), menit, AM/PM — spinbutton dibaca dari aria-valuenow
+  const setSpin = async (label, target) => {
+    const loc = page.locator(`div[role="dialog"] input[aria-label="${label}"]`).first();
+    if (!(await loc.count())) return false;
+    await loc.evaluate((el) => { el.scrollIntoView({ block: 'center' }); el.focus(); }).catch(() => {});
+    for (let i = 0; i < 70; i++) {
+      const v = parseInt((await loc.getAttribute('aria-valuenow').catch(() => '')) || 'NaN', 10);
+      if (v === target) return true;
+      await loc.focus().catch(() => {});
+      await page.keyboard.press(Number.isNaN(v) || v < target ? 'ArrowUp' : 'ArrowDown');
+      await sleep(35);
+    }
+    return false;
+  };
+  const okH = await setSpin('Hours', want.h12);
+  const okM = await setSpin('Minutes', want.min);
+  const okP = await setSpin('AM PM', want.pm ? 1 : 0);
+  await sleep(800);
+
+  const got = await page.evaluate(() => {
+    const q = (l) => document.querySelector(`div[role="dialog"] input[aria-label="${l}"]`);
+    const dateBtnEl = Array.from(document.querySelectorAll('div[role="dialog"] [role="button"]')).find((e) => /\b\d{4}$/.test((e.innerText || '').trim()));
+    return { date: dateBtnEl ? dateBtnEl.innerText.trim() : '', h: q('Hours')?.getAttribute('aria-valuenow'), m: q('Minutes')?.getAttribute('aria-valuenow'), p: q('AM PM')?.getAttribute('aria-valuetext') };
+  });
+  const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const dateOk = new RegExp(`${shortMonths[want.m]}\\w*\\s+${want.d},\\s+${want.y}`, 'i').test(got.date);
+  if (!okH || !okM || !okP || !dateOk) {
+    return { ok: false, reason: `jadwal terbaca "${got.date} ${got.h}:${got.m} ${got.p}", seharusnya ${want.label}` };
+  }
+  const warn = await page.evaluate(() => {
+    const d = document.querySelector('div[role="dialog"]');
+    const m = (d ? d.innerText : '').match(/choose a time at least[^\n]*|pilih waktu minimal[^\n]*/i);
+    return m ? m[0] : '';
+  }).catch(() => '');
+  if (warn) return { ok: false, reason: `Instagram menolak jam jadwal: "${warn}"` };
+  onProgress(`Jadwal Instagram diatur: ${want.label}`);
+  return { ok: true, value: want.label, at: new Date(targetMs).toISOString() };
+}
+
 /**
  * Fungsi utama upload media ke Instagram Feed / Reels (Multi-Akun Support)
  */
-async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsername = '', accountId = '', onProgress = () => {} }) {
+async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsername = '', accountId = '', scheduleAt = '', shareToFacebook = null, dryRun = false, onProgress = () => {} }) {
   if (isUploading) {
     throw new Error('Ada proses upload lain yang sedang berjalan. Menunggu antrean...');
   }
@@ -115,9 +237,9 @@ async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsernam
 
   try {
     // 1. Ambil Cookies sesuai nama akun yang dikirim oleh scheduleRunner
-    let rawCookies = null;
+    let rawCookies = loadInstagramSession(accountId) || loadInstagramSession(accountUsername) || null;
 
-    if (accountUsername) {
+    if (!rawCookies && accountUsername) {
       rawCookies = loadSessionFromFile(accountUsername);
     }
     if (!rawCookies && accountId) {
@@ -149,10 +271,14 @@ async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsernam
 
     onProgress('Membuka browser otomatis Google Chrome...');
     
+    // Jendela di luar layar (mode headless sering ditolak Instagram)
+    const showBrowser = process.env.INSTAGRAM_SHOW_BROWSER === '1';
     browser = await chromium.launch({
       channel: 'chrome',
-      headless: true,
+      headless: false,
       args: [
+        ...(showBrowser ? [] : ['--window-position=-32000,-32000', '--disable-features=CalculateNativeWinOcclusion', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling']),
+        '--hide-crash-restore-bubble',
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-blink-features=AutomationControlled',
@@ -164,8 +290,6 @@ async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsernam
 
     context = await browser.newContext({
       viewport: { width: 1280, height: 900 },
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
       permissions: []
     });
 
@@ -300,6 +424,7 @@ async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsernam
     }
 
     await sleep(2000);
+    if (process.env.IG_DEBUG_CROP) await page.screenshot({ path: process.env.IG_DEBUG_CROP }).catch(() => {});
 
     // 5. KLIK NEXT PERTAMA
     onProgress('Menekan tombol Next pertama...');
@@ -365,7 +490,66 @@ async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsernam
     const shareBtn = page.locator(shareBtnSelectors).first();
     await shareBtn.waitFor({ state: 'visible', timeout: 15000 });
     await sleep(1500);
-    await shareBtn.click({ force: true });
+
+    // 8a. "Share to Facebook" sesuai pilihan di aplikasi (null = biarkan bawaan Instagram)
+    if (shareToFacebook === true || shareToFacebook === false) {
+      const fbSw = await setDialogSwitch(page, /facebook/, shareToFacebook);
+      if (fbSw.found && shareToFacebook === false) {
+        // Konfirmasi "Stop sharing to Facebook?" → "Don't share this post" (hanya posting ini)
+        await sleep(1000);
+        await page.evaluate(() => {
+          const re = /^(don.t share this post|jangan bagikan postingan ini|jangan bagikan kiriman ini)$/i;
+          const b = Array.from(document.querySelectorAll('button, [role="button"]')).find((e) => re.test((e.innerText || '').trim()));
+          if (b) b.click();
+        }).catch(() => {});
+        await sleep(1000);
+      }
+      onProgress(fbSw.found
+        ? `Bagikan ke Facebook: ${fbSw.checked ? 'AKTIF' : 'MATI'}`
+        : 'Pilihan "Share to Facebook" tidak ada di akun ini (dilewati).');
+      await sleep(800);
+    }
+
+    // 8b. Jadwal bawaan Instagram (diunggah lebih awal, Instagram yang memposting di jam jadwal)
+    let igScheduled = null;
+    if (scheduleAt) {
+      const targetMs = new Date(scheduleAt).getTime();
+      if (!Number.isNaN(targetMs) && targetMs > Date.now()) {
+        const effMs = Math.ceil(Math.max(targetMs, Date.now() + IG_SCHEDULE_MIN_LEAD_MS) / 60000) * 60000;
+        onProgress('Mengatur jadwal posting di Instagram (Schedule content)...');
+        const sched = await setInstagramSchedule(page, effMs, onProgress);
+        if (!sched.ok) {
+          const e = new Error(`Gagal mengatur jadwal di Instagram: ${sched.reason}`);
+          e.code = 'INSTAGRAM_SCHEDULE_FAILED';
+          throw e;
+        }
+        igScheduled = sched;
+      }
+    }
+    if (dryRun) {
+      if (process.env.IG_DEBUG_SHOT) await page.screenshot({ path: process.env.IG_DEBUG_SHOT }).catch(() => {});
+      onProgress('[Uji] Berhenti sebelum tombol Share.');
+      return { success: true, dryRun: true, instagramScheduled: Boolean(igScheduled), scheduledFor: igScheduled?.at || '', message: 'Uji berhasil sampai tombol Share.' };
+    }
+    if (igScheduled) {
+      // Tombol header berubah jadi "Schedule"
+      let clickedSched = false;
+      for (let i = 0; i < 10 && !clickedSched; i++) {
+        clickedSched = await page.evaluate(() => {
+          const re = /^(schedule|jadwalkan)$/i;
+          const el = Array.from(document.querySelectorAll('[role="button"], button'))
+            .filter((e) => re.test((e.innerText || '').trim()) && e.offsetParent !== null)
+            .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+          if (!el) return false;
+          el.click();
+          return true;
+        }).catch(() => false);
+        if (!clickedSched) await sleep(1500);
+      }
+      if (!clickedSched) throw new Error('Tombol Schedule Instagram tidak ditemukan.');
+    } else {
+      await shareBtn.click({ force: true });
+    }
 
     // 9. MENUNGGU KONFIRMASI TERBIT
     onProgress('Menunggu konfirmasi terbit dari Instagram...');
@@ -375,7 +559,9 @@ async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsernam
       'text="Your reel has been shared."',
       'text="Reel Anda telah dibagikan."',
       'text="Your reel has been shared"',
-      'text="Reel Anda telah dibagikan"'
+      'text="Reel Anda telah dibagikan"',
+      'text=/(post|reel) (has been|is) scheduled/i',
+      'text=/(postingan|reel) (anda )?(telah )?dijadwalkan/i'
     ];
 
     let postSuccess = false;
@@ -387,8 +573,16 @@ async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsernam
         }
       }
       if (postSuccess) break;
+      // Teks konfirmasi lain (mis. "Your post will be shared on ...", "scheduled", "dijadwalkan")
+      const state = await page.evaluate(() => {
+        const d = document.querySelector('div[role="dialog"]');
+        return { open: Boolean(d), text: d ? (d.innerText || '').slice(0, 3000) : '' };
+      }).catch(() => ({ open: true, text: '' }));
+      if (/(has been|was|is) (shared|scheduled)|will be (shared|posted)|scheduled for|telah (dibagikan|dijadwalkan)|akan (dibagikan|diposting)|dijadwalkan untuk/i.test(state.text)) { postSuccess = true; break; }
+      if (i > 3 && !/create new post|new reel|buat postingan baru|reel baru|sharing|membagikan/i.test(state.text) && !state.open) { postSuccess = true; break; }
       await sleep(2000);
     }
+    if (process.env.IG_DEBUG_AFTER) await page.screenshot({ path: process.env.IG_DEBUG_AFTER }).catch(() => {});
 
     if (!postSuccess) {
       const isCreateModalClosed = !(await page.locator('div[role="dialog"]').first().isVisible().catch(() => false));
@@ -397,14 +591,17 @@ async function uploadToInstagram({ mediaPaths = [], caption = '', accountUsernam
       }
     }
 
-    onProgress('Postingan / Reels berhasil diterbitkan!');
+    onProgress(igScheduled ? `Postingan terjadwal di Instagram untuk ${igScheduled.value}` : 'Postingan / Reels berhasil diterbitkan!');
     await sleep(3500);
 
     return {
       success: true,
-      message: 'Postingan berhasil diunggah ke Instagram.'
+      instagramScheduled: Boolean(igScheduled),
+      scheduledFor: igScheduled?.at || '',
+      message: igScheduled ? `Postingan terjadwal di Instagram (${igScheduled.value}).` : 'Postingan berhasil diunggah ke Instagram.'
     };
   } catch (error) {
+    if (error && error.code === 'INSTAGRAM_SCHEDULE_FAILED') throw error;
     console.error('[Uploader Error]:', error);
     await sleep(4000);
     return {

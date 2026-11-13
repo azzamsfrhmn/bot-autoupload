@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aktivasi Lisensi - Bot Auto Upload</title>
+  <style>
+    :root {
+      --bg-dark: #0a0d14;
+      --card-bg: rgba(18, 24, 38, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --primary: #35b29f;
+      --primary-hover: #2c9a89;
+      --primary-glow: rgba(53, 178, 159, 0.35);
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text-main: #f5f4f1;
+      --text-muted: #9d9c97;
+      --input-bg: rgba(11, 15, 25, 0.85);
+      --input-border: rgba(255, 255, 255, 0.1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 15% 20%, rgba(53, 178, 159, 0.12), transparent 45%),
+        radial-gradient(circle at 85% 80%, rgba(16, 185, 129, 0.08), transparent 45%);
+      color: var(--text-main);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Custom Title Bar Drag Area */
+    .titlebar {
+      height: 38px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 14px;
+      -webkit-app-region: drag;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      background: rgba(10, 13, 20, 0.6);
+      backdrop-filter: blur(10px);
+      z-index: 100;
+    }
+
+    .titlebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .titlebar-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .window-controls {
+      display: flex;
+      -webkit-app-region: no-drag;
+    }
+
+    .win-btn {
+      width: 38px;
+      height: 38px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .win-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .win-btn.close:hover {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    /* Banner Pengingat Pojok Kanan Atas (Fixed Floating) */
+    .corner-update-banner {
+      display: none;
+      position: fixed !important;
+      top: 50px !important;
+      right: 20px !important;
+      background: #1a1b1e;
+      border: 1px solid rgba(245, 158, 11, 0.5);
+      border-radius: 12px;
+      padding: 10px 14px;
+      box-shadow: 0 14px 35px rgba(0, 0, 0, 0.65), 0 0 20px rgba(245, 158, 11, 0.15);
+      backdrop-filter: blur(14px);
+      z-index: 99998 !important;
+      align-items: center;
+      gap: 12px;
+      animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      max-width: 400px;
+    }
+
+    @keyframes slideInRight {
+      from { opacity: 0; transform: translateX(25px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    .corner-badge-dot {
+      width: 10px;
+      height: 10px;
+      min-width: 10px;
+      background: var(--warning);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--warning);
+      animation: pulseWarning 1.8s infinite;
+    }
+
+    @keyframes pulseWarning {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.85); }
+    }
+
+    .corner-text-group {
+      text-align: left;
+    }
+
+    .corner-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #fbbf24;
+      line-height: 1.2;
+    }
+
+    .corner-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      line-height: 1.35;
+    }
+
+    .btn-corner-update {
+      padding: 7px 14px;
+      background: linear-gradient(135deg, var(--primary), #2c9a89);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 12px var(--primary-glow);
+    }
+
+    .btn-corner-update:hover {
+      background: linear-gradient(135deg, #35b29f, var(--primary));
+      transform: translateY(-1px);
+    }
+
+    /* Container Card */
+    .content-area {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      position: relative;
+      z-index: 10;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 440px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 34px 30px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(53, 178, 159, 0.05);
+      backdrop-filter: blur(16px);
+      text-align: center;
+    }
+
+    .card-icon {
+      width: 50px;
+      height: 50px;
+      background: linear-gradient(135deg, rgba(53, 178, 159, 0.2), rgba(16, 185, 129, 0.15));
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px auto;
+      color: #35b29f;
+    }
+
+    h2 {
+      font-size: 21px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      margin-bottom: 6px;
+    }
+
+    p.subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 22px;
+    }
+
+    .form-group {
+      text-align: left;
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      letter-spacing: 0.2px;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-size: 13px;
+      color: var(--text-main);
+      outline: none;
+      transition: all 0.2s ease;
+      user-select: text;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+
+    input.license-field {
+      padding-right: 84px;
+      letter-spacing: 1px;
+    }
+
+    input.license-field[readonly] {
+      color: #9d9c97;
+      background: rgba(0, 0, 0, 0.35);
+      cursor: default;
+    }
+
+    input.hwid-field {
+      padding-right: 70px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      color: #d0cec8;
+      background: rgba(0, 0, 0, 0.35);
+    }
+
+    .copy-btn {
+      position: absolute;
+      right: 8px;
+      padding: 5px 10px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #9d9c97;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 12px;
+      margin-top: 6px;
+      background: linear-gradient(135deg, var(--primary), #2c9a89);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 8px 20px -4px var(--primary-glow);
+      transition: all 0.2s ease;
+    }
+
+    .btn-submit:hover {
+      background: linear-gradient(135deg, #35b29f, var(--primary));
+      transform: translateY(-1px);
+      box-shadow: 0 12px 24px -4px var(--primary-glow);
+    }
+
+    .btn-submit:active {
+      transform: translateY(0);
+    }
+
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* Link Beli Lisensi */
+    .buy-license-box {
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
+
+    .buy-license-link {
+      color: #6fcdbd;
+      text-decoration: none;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .buy-license-link:hover {
+      color: #6fcdbd;
+      text-decoration: underline;
+    }
+
+    .status-alert {
+      margin-top: 16px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      display: none;
+      line-height: 1.4;
+      text-align: left;
+    }
+
+    .status-alert.error {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      display: block;
+    }
+
+    .status-alert.success {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #6ee7b7;
+      display: block;
+    }
+
+    /* Game Style Update Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(3, 7, 18, 0.85);
+      backdrop-filter: blur(10px);
+      z-index: 99999;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .update-dialog {
+      background: #16181b;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 18px;
+      padding: 28px 24px;
+      width: 100%;
+      max-width: 390px;
+      text-align: center;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 35px rgba(53, 178, 159, 0.15);
+      animation: modalFadeIn 0.25s ease-out;
+    }
+
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    .update-badge-icon {
+      width: 52px;
+      height: 52px;
+      background: linear-gradient(135deg, rgba(53, 178, 159, 0.25), rgba(16, 185, 129, 0.2));
+      border: 1px solid rgba(53, 178, 159, 0.35);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px auto;
+      color: #6fcdbd;
+    }
+
+    .update-dialog h3 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #f5f4f1;
+      margin-bottom: 6px;
+    }
+
+    .update-desc {
+      font-size: 13px;
+      color: #9d9c97;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+
+    .update-progress-container {
+      display: none;
+      margin-bottom: 20px;
+      text-align: left;
+    }
+
+    .progress-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #d0cec8;
+      margin-bottom: 6px;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #35b29f, #10b981);
+      border-radius: 6px;
+      transition: width 0.2s ease;
+    }
+
+    .update-action-btns {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn-update-cancel {
+      flex: 1;
+      padding: 11px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      color: #d0cec8;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-update-cancel:hover {
+      background: rgba(255, 255, 255, 0.14);
+      color: #fff;
+    }
+
+    .btn-update-confirm {
+      flex: 1.4;
+      padding: 11px;
+      background: linear-gradient(135deg, var(--primary), #2c9a89);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-update-confirm:hover {
+      background: linear-gradient(135deg, #35b29f, var(--primary));
+    }
+
+    .btn-update-confirm:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+    /* Tema flat: tanpa glow/gradien/blur */
+    :root { --bg-dark: #131416; --card-bg: #1a1b1e; --input-bg: #101113; --primary-glow: rgba(53, 178, 159, 0.14); --accent: #35b29f; }
+    body { background-image: none !important; }
+    * { backdrop-filter: none !important; }
+    .btn-submit, .btn-corner-update, .btn-update-confirm { transform: none !important; background: var(--primary) !important; color: #0b1f1b !important; box-shadow: none !important; }
+    .btn-submit:hover, .btn-corner-update:hover, .btn-update-confirm:hover { background: var(--primary-hover) !important; }
+  </style>
+</head>
+<body>
+
+  <!-- Window Bar -->
+  <div class="titlebar">
+    <div class="titlebar-brand">
+      <div class="titlebar-dot"></div>
+      <span>Bot Auto Upload Core</span>
+    </div>
+    <div class="window-controls">
+      <button class="win-btn" id="btn-minimize" title="Minimize">
+        <svg width="12" height="12" viewBox="0 0 12 12"><rect fill="currentColor" width="10" height="1" x="1" y="6"/></svg>
+      </button>
+      <button class="win-btn close" id="btn-close" title="Close">
+        <svg width="12" height="12" viewBox="0 0 12 12"><polygon fill="currentColor" points="11 1.7 10.3 1 6 5.3 1.7 1 1 1.7 5.3 6 1 10.3 1.7 11 6 6.7 10.3 11 11 10.3 6.7 6"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Banner Pengingat Pojok Kanan Atas -->
+  <div id="corner-update-banner" class="corner-update-banner">
+    <div class="corner-badge-dot"></div>
+    <div class="corner-text-group">
+      <div id="corner-banner-title" class="corner-title">Update Tersedia!</div>
+      <div class="corner-desc">Silakan perbarui aplikasi agar aplikasi berfungsi dengan baik.</div>
+    </div>
+    <button type="button" id="btn-corner-open" class="btn-corner-update">Update</button>
+  </div>
+
+  <!-- Content -->
+  <div class="content-area">
+    <div class="card">
+      <div class="card-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      </div>
+
+      <h2>Aktivasi Lisensi</h2>
+      <p class="subtitle">Masukkan Serial Key resmi Anda untuk mengaktifkan akses otomatisasi di perangkat ini.</p>
+
+      <form id="activation-form">
+        <div class="form-group">
+          <label>Hardware ID (Perangkat Ini)</label>
+          <div class="input-wrapper">
+            <input type="text" id="hwid-input" class="hwid-field" readonly value="Memuat Hardware ID...">
+            <button type="button" class="copy-btn" id="btn-copy">Copy</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Serial License Key</label>
+          <div class="input-wrapper">
+            <input type="password" id="license-input" class="license-field" placeholder="ETNIC-XXXX-XXXX-XXXX" spellcheck="false" autocomplete="off" required>
+            <button type="button" class="copy-btn" id="btn-license-unlock" style="display: none;" title="Hapus lisensi tersimpan & masukkan lisensi lain">Ganti</button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-submit" id="btn-activate">Aktifkan Sekarang</button>
+      </form>
+
+      <!-- Bagian Beli Lisensi -->
+      <div class="buy-license-box">
+        <span>Belum punya lisensi?</span>
+        <a href="#" id="link-buy-license" class="buy-license-link">
+          Dapatkan di sini
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+        </a>
+      </div>
+
+      <div id="status-msg" class="status-alert"></div>
+    </div>
+  </div>
+
+  <!-- Game Style Update Dialog Modal -->
+  <div id="update-modal" class="modal-overlay">
+    <div class="update-dialog">
+      <div class="update-badge-icon">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </div>
+
+      <h3 id="update-title">Pembaruan Tersedia!</h3>
+      <p id="update-desc" class="update-desc">Versi baru telah dirilis dengan pembaruan stabilitas dan fitur terkini.</p>
+
+      <div id="update-progress-container" class="update-progress-container">
+        <div class="progress-labels">
+          <span id="update-status-text">Mengunduh pembaruan...</span>
+          <span id="update-percent">0%</span>
+        </div>
+        <div class="progress-track">
+          <div id="update-progress-bar" class="progress-bar-fill"></div>
+        </div>
+      </div>
+
+      <div class="update-action-btns">
+        <button type="button" id="btn-cancel-update" class="btn-update-cancel">Nanti Saja</button>
+        <button type="button" id="btn-confirm-update" class="btn-update-confirm">Update Sekarang</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const hwidInput = document.getElementById('hwid-input');
+    const licenseInput = document.getElementById('license-input');
+    const btnCopy = document.getElementById('btn-copy');
+    const btnActivate = document.getElementById('btn-activate');
+    const statusMsg = document.getElementById('status-msg');
+    const btnMinimize = document.getElementById('btn-minimize');
+    const btnClose = document.getElementById('btn-close');
+    const linkBuyLicense = document.getElementById('link-buy-license');
+
+    // Elemen Modal Update & Banner Pojok Kanan
+    const updateModal = document.getElementById('update-modal');
+    const updateTitle = document.getElementById('update-title');
+    const updateDesc = document.getElementById('update-desc');
+    const updateProgressContainer = document.getElementById('update-progress-container');
+    const updateProgressBar = document.getElementById('update-progress-bar');
+    const updatePercent = document.getElementById('update-percent');
+    const updateStatusText = document.getElementById('update-status-text');
+    const btnConfirmUpdate = document.getElementById('btn-confirm-update');
+    const btnCancelUpdate = document.getElementById('btn-cancel-update');
+
+    const cornerUpdateBanner = document.getElementById('corner-update-banner');
+    const cornerBannerTitle = document.getElementById('corner-banner-title');
+    const btnCornerOpen = document.getElementById('btn-corner-open');
+
+    // Penyimpan Status Versi Update Global
+    let latestAvailableUpdate = null;
+
+    // Kontrol Jendela (Minimize & Close)
+    btnMinimize.addEventListener('click', () => {
+      if (window.electronAPI && window.electronAPI.minimizeWindow) {
+        window.electronAPI.minimizeWindow();
+      }
+    });
+
+    btnClose.addEventListener('click', () => {
+      if (window.electronAPI && window.electronAPI.closeWindow) {
+        window.electronAPI.closeWindow();
+      }
+    });
+
+    // Salin HWID
+    btnCopy.addEventListener('click', () => {
+      if (hwidInput.value && hwidInput.value !== 'Memuat Hardware ID...') {
+        navigator.clipboard.writeText(hwidInput.value);
+        btnCopy.textContent = 'Tersalin!';
+        setTimeout(() => { btnCopy.textContent = 'Copy'; }, 2000);
+      }
+    });
+
+    // Buka Website Pembelian Lisensi
+    linkBuyLicense.addEventListener('click', (e) => {
+      e.preventDefault();
+      const targetUrl = 'https://license.etnicstore.com/';
+      if (window.electronAPI && window.electronAPI.openExternalUrl) {
+        window.electronAPI.openExternalUrl(targetUrl);
+      } else {
+        window.open(targetUrl, '_blank');
+      }
+    });
+
+    // Ambil HWID saat aplikasi siap
+    window.addEventListener('DOMContentLoaded', async () => {
+      try {
+        if (window.electronAPI && window.electronAPI.getMachineId) {
+          const id = await window.electronAPI.getMachineId();
+          hwidInput.value = id || 'Gagal mendeteksi HWID';
+        }
+      } catch (e) {
+        hwidInput.value = 'Offline / Gagal mendeteksi';
+      }
+
+      // Picu pengecekan update otomatis setelah listener siap
+      setTimeout(() => {
+        if (window.electronAPI && window.electronAPI.checkForUpdates) {
+          window.electronAPI.checkForUpdates();
+        }
+      }, 1000);
+    });
+
+    // ==========================================
+    // LOGIKA AUTO-UPDATER (GAME STYLE POPUP)
+    // ==========================================
+    // Login otomatis (license tersimpan) menunggu hasil cek update dulu,
+    // agar popup update sempat tampil sebelum pindah halaman.
+    let resolveUpdateCheck = () => {};
+    const updateCheckDone = new Promise((resolve) => { resolveUpdateCheck = resolve; });
+    setTimeout(() => resolveUpdateCheck('timeout'), 20000);
+    // Pengaman: selama ada update yang belum ditunda pengguna, jangan pindah halaman
+    let updateDeferred = false;
+    let pendingRedirect = false;
+    const goToMain = () => {
+      if (latestAvailableUpdate && !updateDeferred) { pendingRedirect = true; return; }
+      window.electronAPI.redirectMain();
+    };
+
+    if (window.electronAPI) {
+      if (window.electronAPI.onUpdateNotAvailable) {
+        window.electronAPI.onUpdateNotAvailable(() => resolveUpdateCheck('latest'));
+      }
+
+      // 1. Munculkan popup jika ada pembaruan di server
+      if (window.electronAPI.onUpdateAvailable) {
+        window.electronAPI.onUpdateAvailable((data) => {
+          latestAvailableUpdate = data;
+          resolveUpdateCheck('available');
+          updateTitle.textContent = `Update v${data.version} Tersedia!`;
+          updateDesc.textContent = data.releaseNotes || `Versi ${data.version} siap diunduh untuk meningkatkan performa bot Anda.`;
+          cornerBannerTitle.textContent = `Update v${data.version} Tersedia!`;
+          updateModal.style.setProperty('display', 'flex', 'important');
+          cornerUpdateBanner.style.setProperty('display', 'none', 'important');
+        });
+      }
+
+      // 2. Pantau progress unduhan
+      if (window.electronAPI.onUpdateProgress) {
+        window.electronAPI.onUpdateProgress((data) => {
+          updateProgressBar.style.width = `${data.percent}%`;
+          updatePercent.textContent = `${data.percent}%`;
+        });
+      }
+
+      // 3. Unduhan selesai -> Tombol berubah menjadi Pasang & Restart
+      if (window.electronAPI.onUpdateDownloaded) {
+        window.electronAPI.onUpdateDownloaded((data) => {
+          updateStatusText.textContent = 'Unduhan selesai!';
+          btnConfirmUpdate.disabled = false;
+          btnConfirmUpdate.textContent = 'Pasang & Restart Sekarang';
+          btnConfirmUpdate.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+          btnConfirmUpdate.onclick = () => {
+            window.electronAPI.installUpdateNow();
+          };
+        });
+      }
+
+      // 4. Tangani error updater jika terjadi kendala jaringan
+      if (window.electronAPI.onUpdateError) {
+        window.electronAPI.onUpdateError((msg) => {
+          resolveUpdateCheck('error');
+          updateStatusText.textContent = 'Gagal mengunduh pembaruan.';
+          btnConfirmUpdate.disabled = false;
+          btnConfirmUpdate.textContent = 'Coba Lagi';
+        });
+      }
+    }
+
+    // Tombol Konfirmasi Update (Mulai Unduh)
+    btnConfirmUpdate.addEventListener('click', () => {
+      btnConfirmUpdate.disabled = true;
+      btnConfirmUpdate.textContent = 'Mengunduh...';
+      btnCancelUpdate.style.setProperty('display', 'none', 'important');
+      updateProgressContainer.style.setProperty('display', 'block', 'important');
+
+      if (window.electronAPI && window.electronAPI.startUpdateDownload) {
+        window.electronAPI.startUpdateDownload();
+      }
+    });
+
+    // Tombol "Nanti Saja": Tutup Modal & Munculkan Banner Pojok Kanan Atas
+    btnCancelUpdate.addEventListener('click', () => {
+      updateModal.style.setProperty('display', 'none', 'important');
+      cornerUpdateBanner.style.setProperty('display', 'flex', 'important');
+      // Pengguna menunda update → lanjutkan login (yang tertahan atau otomatis)
+      updateDeferred = true;
+      if (pendingRedirect) window.electronAPI.redirectMain();
+      else if (licenseInput.value.trim() && licenseInput.readOnly) document.getElementById('activation-form').requestSubmit();
+    });
+
+    // Tombol Update di Banner: Sembunyikan Banner & Buka Kembali Modal Update
+    btnCornerOpen.addEventListener('click', () => {
+      cornerUpdateBanner.style.setProperty('display', 'none', 'important');
+      updateModal.style.setProperty('display', 'flex', 'important');
+    });
+
+    // ==========================================
+    // FORM AKTIVASI LISENSI
+    // ==========================================
+    // Lisensi tersimpan: isi otomatis dalam keadaan terkunci & tersensor
+    const btnLicenseUnlock = document.getElementById('btn-license-unlock');
+
+    function setLicenseLocked(locked) {
+      licenseInput.readOnly = locked;
+      btnLicenseUnlock.style.display = locked ? 'block' : 'none';
+    }
+
+    btnLicenseUnlock.addEventListener('click', async () => {
+      await window.electronAPI?.clearSavedLicense?.();
+      licenseInput.value = '';
+      setLicenseLocked(false);
+      statusMsg.className = 'status-alert';
+      licenseInput.focus();
+    });
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      const savedKey = await window.electronAPI?.getSavedLicense?.().catch(() => '');
+      if (savedKey) {
+        licenseInput.value = savedKey;
+        setLicenseLocked(true);
+        // Tunggu cek update; jika ada update, biarkan popup tampil (login lanjut setelah "Nanti")
+        if ((await updateCheckDone) === 'available') return;
+        document.getElementById('activation-form').requestSubmit();
+      }
+    });
+
+    document.getElementById('activation-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const key = licenseInput.value.trim();
+      if (!key) return;
+
+      btnActivate.disabled = true;
+      btnActivate.textContent = 'Memverifikasi ke Server...';
+      statusMsg.className = 'status-alert';
+      statusMsg.style.display = ''; // class 'status-alert' sudah menyembunyikan; inline 'none' akan menimpa class error/success
+
+      try {
+        const response = await window.electronAPI.activateLicense(key);
+        if (response && response.valid) {
+          statusMsg.className = 'status-alert success';
+          statusMsg.textContent = `Aktivasi Berhasil! Pemilik: ${response.client_name}. Mengalihkan...`;
+          setTimeout(goToMain, 1200);
+        } else {
+          statusMsg.className = 'status-alert error';
+          statusMsg.style.display = '';
+          statusMsg.textContent = response?.wrongKey
+            ? 'License yang Anda masukkan salah.'
+            : (response?.message || 'Gagal memverifikasi lisensi. Coba lagi.');
+          // Key tersimpan ditolak server → buka kunci agar bisa diganti
+          if (response?.wrongKey) setLicenseLocked(false);
+          btnActivate.disabled = false;
+          btnActivate.textContent = 'Aktifkan Sekarang';
+        }
+      } catch (err) {
+        statusMsg.className = 'status-alert error';
+        statusMsg.textContent = 'Gagal terhubung ke server lisensi. Pastikan internet Anda aktif.';
+        btnActivate.disabled = false;
+        btnActivate.textContent = 'Aktifkan Sekarang';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -9,6 +9,8 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+// Jeda, batas tunggu & flag Chrome menyesuaikan spek perangkat (Mode Perangkat Ringan)
+const { scaleMs, chromeLiteArgs } = require('../core/perfProfile');
 
 const ROOT_DIR = process.cwd();
 const CAPCUT_PROFILE_DIR = path.resolve(ROOT_DIR, 'sessions/capcut_web_profile');
@@ -20,7 +22,7 @@ const CDP_PORT = 9245;
 });
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }
 
 function getOriginalChromeExecutablePath() {
@@ -54,6 +56,7 @@ function cleanupCapCutProfileLocks() {
 }
 
 async function waitForChromeReady(port, maxRetries = 40, delay = 500) {
+  maxRetries = scaleMs(maxRetries);
   for (let i = 0; i < maxRetries; i++) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`);
@@ -119,9 +122,10 @@ async function openCapCutLoginSession() {
   const chromeExe = getOriginalChromeExecutablePath();
   if (!chromeExe) throw new Error('Google Chrome asli tidak ditemukan di sistem.');
 
-  spawn(chromeExe, [
+  spawn(chromeExe, [...chromeLiteArgs(), 
     `--remote-debugging-port=${CDP_PORT}`,
     `--user-data-dir=${CAPCUT_PROFILE_DIR}`,
+    '--hide-crash-restore-bubble', // jangan munculkan "Restore pages?" (Chrome bot ditutup paksa)
     '--no-first-run',
     '--no-default-browser-check',
     '--start-maximized',
@@ -220,9 +224,10 @@ async function runCapCutTemplatePipeline({
   const chromeExe = getOriginalChromeExecutablePath();
   if (!chromeExe) throw new Error('Google Chrome asli tidak ditemukan di sistem.');
 
-  let chromeProcess = spawn(chromeExe, [
+  let chromeProcess = spawn(chromeExe, [...chromeLiteArgs(), 
     `--remote-debugging-port=${CDP_PORT}`,
     `--user-data-dir=${CAPCUT_PROFILE_DIR}`,
+    '--hide-crash-restore-bubble', // jangan munculkan "Restore pages?" (Chrome bot ditutup paksa)
     '--no-first-run',
     '--no-default-browser-check',
     '--start-maximized',

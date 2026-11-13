@@ -6,51 +6,34 @@
     </div>
   </div>
 
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 24px;">
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 24px;">
     <!-- Gemini Card -->
     <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
       <span class="form-label" style="font-size: 11px;">Gemini (Caption AI)</span>
-      <div id="aiConnectionStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #f59e0b; margin-top: 8px;">
-        <span class="status-dot" style="background: #f59e0b;"></span><span>Memeriksa...</span>
+      <div id="aiConnectionStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #10b981; margin-top: 8px;">
+        <span class="status-dot" style="background: #10b981;"></span><span>Terhubung</span>
       </div>
-      <div id="aiStatusDetail" class="form-hint" style="margin-top: 6px;">Menghubungkan ke server...</div>
+      <div id="aiStatusDetail" class="form-hint" style="margin-top: 6px;">Lisensi Developer Terhubung Permanen</div>
     </div>
 
-    <!-- ChatGPT Gambar Card -->
+    <!-- ChatGPT Card (Single Unified Session) -->
     <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
-        <span class="form-label" style="font-size: 11px;">ChatGPT Gambar</span>
-        <div style="display: flex; gap: 4px;">
-          <button type="button" id="btnRefreshChatGpt" class="chip-btn" style="padding: 2px 8px; font-size: 11px;">W1</button>
-          <button type="button" id="btnLoginChatGptW2" class="chip-btn" style="padding: 2px 8px; font-size: 11px; background: #2563eb; color: #fff;">Login W2</button>
-        </div>
+        <span class="form-label" style="font-size: 11px;">ChatGPT (Gambar & Video)</span>
+        <button type="button" id="btnRefreshChatGpt" class="chip-btn" style="padding: 2px 10px; font-size: 11px; background: #35b29f; color: #fff;">Login</button>
       </div>
-      <div id="chatgptStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: var(--success); margin-top: 8px;">
-        <span class="status-dot"></span><span id="chatgptStatusText">Aktif</span>
+      <div id="chatgptStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #f59e0b; margin-top: 8px;">
+        <span class="status-dot" style="background: #f59e0b;" id="chatgptStatusDot"></span>
+        <span id="chatgptStatusText">Belum Login</span>
       </div>
-      <div id="chatgptAccountEmail" class="form-hint" style="margin-top: 6px;">Sesi DALL·E 3 (Multi-Worker)</div>
-    </div>
-
-    <!-- ChatGPT Video Card -->
-    <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <span class="form-label" style="font-size: 11px;">CHATGPT VIDEO</span>
-        <div style="display: flex; gap: 4px;">
-          <button type="button" id="btnLoginChatGptVideo" class="chip-btn" style="padding: 2px 8px; font-size: 11px;">W1</button>
-          <button type="button" id="btnLoginChatGptVideoW2" class="chip-btn" style="padding: 2px 8px; font-size: 11px; background: #2563eb; color: #fff;">Login W2</button>
-        </div>
-      </div>
-      <div id="chatgptVideoStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #a78bfa; margin-top: 8px;">
-        <span class="status-dot" style="background: #7c3aed;"></span><span>ChatGPT Video</span>
-      </div>
-      <div class="form-hint" style="margin-top: 6px;">Custom GPT Project (Worker 1 & Worker 2)</div>
+      <div id="chatgptAccountEmail" class="form-hint" style="margin-top: 6px;">Sesi DALL·E 3 & Video Prompt</div>
     </div>
 
     <!-- Pinterest Card -->
     <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <span class="form-label" style="font-size: 11px;">Pinterest</span>
-        <button type="button" id="btnLoginPinterest" class="chip-btn" style="padding: 2px 8px; font-size: 11px;">Login</button>
+        <button type="button" id="btnLoginPinterest" class="chip-btn" style="padding: 2px 10px; font-size: 11px; background: #35b29f; color: #fff;">Login</button>
       </div>
       <div id="pinterestStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #f59e0b; margin-top: 8px;">
         <span class="status-dot" style="background: #f59e0b;" id="pinterestStatusDot"></span>
@@ -59,11 +42,11 @@
       <div id="pinterestAccountDetail" class="form-hint" style="margin-top: 6px;">Sesi Karakter</div>
     </div>
 
-    <!-- TikTok Streamer Card -->
-    <div class="studio-card" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
+    <!-- TikTok Streamer Card (hanya tampil saat akun TikTok aktif) -->
+    <div class="studio-card" id="cardTikTokStreamer" style="padding: 18px; background: var(--bg-app); margin-bottom: 0;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <span class="form-label" style="font-size: 11px;">TikTok Shop Streamer</span>
-        <button type="button" id="btnLoginTikTokStreamer" class="chip-btn" style="padding: 2px 8px; font-size: 11px; background: #2563eb; color: #fff;">Buka / Cek</button>
+        <button type="button" id="btnLoginTikTokStreamer" class="chip-btn" style="padding: 2px 10px; font-size: 11px; background: #35b29f; color: #fff;">Login</button>
       </div>
       <div id="ttStreamerStatusBadge" style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; color: #f59e0b; margin-top: 8px;">
         <span class="status-dot" style="background: #f59e0b;" id="ttStreamerStatusDot"></span>
@@ -73,7 +56,7 @@
     </div>
   </div>
 
-  <!-- Multi-Akun Google Flow -->
+  <!-- Multi-Akun Google Flow & Setelan Pipeline Video -->
   <div class="studio-card" style="padding: 20px; background: var(--bg-app); margin-bottom: 24px;">
     <div class="card-header-row" style="margin-bottom: 14px;">
       <div class="card-header-left">
@@ -82,24 +65,96 @@
       </div>
       <button type="button" id="btnAddFlowAccount" class="chip-btn">+ Tambah Akun</button>
     </div>
+
+    <!-- TOGGLE ON / OFF MODE HEADLESS GLOBAL (CHATGPT & GOOGLE FLOW) -->
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); margin-bottom: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 2px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-weight: 700; font-size: 13px; color: #fff;">Mode Headless AI Pipeline (Senyap & Ringan)</span>
+          <span id="headlessStatusLabel" style="font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">NONAKTIF</span>
+        </div>
+        <div class="form-hint" style="font-size: 11.5px; color: var(--text-dim); margin-top: 2px;">
+          Jalankan seluruh pembuatan video (ChatGPT Storyboard & Google Flow) di latar belakang tanpa membuka jendela Chrome fisik. Menghemat beban RAM & GPU.
+        </div>
+      </div>
+
+      <label style="position: relative; display: inline-block; width: 46px; height: 24px; margin: 0; cursor: pointer; flex-shrink: 0;">
+        <input type="checkbox" id="toggleFlowHeadless" style="opacity: 0; width: 0; height: 0; position: absolute;">
+        <span class="headless-switch-slider" style="position: absolute; cursor: pointer; inset: 0; background-color: #33353a; transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 24px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);"></span>
+      </label>
+    </div>
+
     <div id="flowAccountsList" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px;"></div>
   </div>
 
-  <!-- API Key Setting -->
+  <!-- API Key milik pelanggan untuk konsep 3D Kartun -->
+  <div class="form-group" id="kartunKeysSection" style="padding: 14px; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.02);">
+    <div class="form-label-row">
+      <label class="form-label">Konsep 3D Kartun (Dodo &amp; Bongo) — API Key Anda</label>
+      <span id="kartunKeysStatus" style="font-size: 11.5px; color: #9d9c97;">Memuat...</span>
+    </div>
+    <div style="font-size: 11.5px; color: #9d9c97; margin: 2px 0 10px; line-height: 1.5;">
+      Suara memakai <b>ElevenLabs</b> (wajib, ±1.300 karakter per video). Naskah memakai <b>Claude</b> (opsional; kosong = Gemini bawaan, gratis).
+      Key disimpan terenkripsi di komputer ini dan hanya dikirim ke ElevenLabs / Anthropic.
+    </div>
+    <label for="kartunElevenKeyInput" class="form-label" style="font-size: 12px;">ElevenLabs API Key</label>
+    <input type="password" id="kartunElevenKeyInput" class="input-box" placeholder="sk_... (kosongkan bila tidak diubah)" autocomplete="off" style="margin-bottom: 10px;">
+    <label for="kartunClaudeKeyInput" class="form-label" style="font-size: 12px;">Claude (Anthropic) API Key — opsional</label>
+    <input type="password" id="kartunClaudeKeyInput" class="input-box" placeholder="sk-ant-... (kosongkan bila tidak diubah)" autocomplete="off">
+    <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+      <button type="button" id="btnSaveKartunKeys" class="chip-btn" style="padding: 8px 16px; background: #35b29f; color: #fff;">Simpan Key</button>
+      <button type="button" id="btnTestKartunKeys" class="chip-btn" style="padding: 8px 16px;">Tes Key</button>
+      <button type="button" id="btnClearKartunKeys" class="chip-btn" style="padding: 8px 16px;">Hapus Key</button>
+    </div>
+    <div id="kartunKeysResult" style="font-size: 11.5px; color: #c9c7c1; margin-top: 8px; line-height: 1.6;"></div>
+  </div>
+
+  <!-- API Key Setting (Terkunci Permanen & Disensor) -->
   <div class="form-group">
     <div class="form-label-row">
-      <label for="settingsApiKeyInput" class="form-label">Google Gemini API Key</label>
-      <a href="https://aistudio.google.com/api-keys" target="_blank" style="font-size: 11.5px; color: var(--accent-primary); text-decoration: none;">Dapatkan API Key Gratis ↗</a>
+      <label for="settingsApiKeyInput" class="form-label">Google Gemini API Key (Bawaan Sistem)</label>
+      <span style="font-size: 11.5px; color: #10b981; font-weight: 600;">✓ Lisensi Developer Aktif (Terkunci)</span>
     </div>
     <div style="display: flex; gap: 8px;">
-      <input type="password" id="settingsApiKeyInput" class="input-box" placeholder="Masukkan Gemini API Key...">
-      <button type="button" id="btnToggleShowKey" class="chip-btn" style="padding: 0 16px;">👁 Lihat</button>
+      <input type="password" id="settingsApiKeyInput" class="input-box" value="••••••••••••••••••••••••••••••••••••••••" readonly disabled style="opacity: 0.8; background: rgba(255,255,255,0.04); cursor: not-allowed; letter-spacing: 2px;">
+      <button type="button" class="chip-btn" disabled style="padding: 0 16px; opacity: 0.6; cursor: not-allowed;">Terkunci</button>
     </div>
   </div>
 
   <div style="display: flex; gap: 12px; margin-top: 24px;">
-    <button type="button" id="btnTestAiConnection" class="chip-btn" style="padding: 12px 20px;">⚡ Tes Koneksi Gemini</button>
-    <button type="button" id="btnSaveAiSettings" class="btn-execute" style="flex: 1;">💾 Simpan Konfigurasi</button>
+    <button type="button" id="btnTestAiConnection" class="chip-btn" style="padding: 12px 20px;">Tes Koneksi Gemini</button>
+    <button type="button" id="btnSaveAiSettings" class="btn-execute" style="flex: 1;">Simpan Konfigurasi</button>
   </div>
   <div id="settingsAlert" class="alert-card" style="margin-top: 16px;"></div>
 </div>
+
+<style>
+  .headless-switch-slider::before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #ffffff;
+    transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  input#toggleFlowHeadless:not(:checked) + .headless-switch-slider {
+    background-color: #33353a !important;
+  }
+
+  input#toggleFlowHeadless:not(:checked) + .headless-switch-slider::before {
+    transform: translateX(0px);
+  }
+
+  input#toggleFlowHeadless:checked + .headless-switch-slider {
+    background-color: #35b29f !important;
+  }
+
+  input#toggleFlowHeadless:checked + .headless-switch-slider::before {
+    transform: translateX(22px);
+  }
+</style>

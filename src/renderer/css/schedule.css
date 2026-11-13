@@ -76,7 +76,7 @@
 }
 
 .dropzone:hover {
-  border-color: var(--primary-blue, #0095f6);
+  border-color: var(--primary-blue, #35b29f);
   background-color: #1a1a1a;
 }
 
@@ -188,7 +188,7 @@
 
 .ai-input-field:focus {
   outline: none;
-  border-color: var(--primary-blue, #0095f6);
+  border-color: var(--primary-blue, #35b29f);
 }
 
 .ai-select-field {
@@ -208,7 +208,7 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  background: linear-gradient(135deg, #35b29f 0%, #e8a25c 100%);
   color: #ffffff;
   border: none;
   border-radius: 8px;
@@ -242,7 +242,7 @@
 
 #captionInput:focus {
   outline: none;
-  border-color: var(--primary-blue, #0095f6);
+  border-color: var(--primary-blue, #35b29f);
 }
 
 input[type="datetime-local"] {
@@ -390,3 +390,19 @@ input[type="datetime-local"] {
   font-size: 12px;
   word-break: break-word;
 }
+/* ===== Log Posting (kartu terpisah) ===== */
+.post-log-list { max-height: 280px; overflow-y: auto; border: 1px solid var(--border-subtle, rgba(255,255,255,.08)); border-radius: 10px; background: rgba(13,14,16,.6); font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.post-log-row { display: grid; grid-template-columns: 70px 82px 1fr; gap: 10px; align-items: start; padding: 7px 12px; border-bottom: 1px solid rgba(255,255,255,.04); color: #d6d4cf; }
+.post-log-row:last-child { border-bottom: 0; }
+.post-log-row.warn .post-log-msg { color: #f0bb85; }
+.post-log-time { color: #75746f; }
+.post-log-msg { word-break: break-word; }
+.post-log-badge { font-size: 10px; font-weight: 700; letter-spacing: .04em; padding: 2px 6px; border-radius: 5px; text-align: center; font-family: inherit; }
+.post-log-badge.run { background: rgba(53,178,159,.12); color: #6fcdbd; }
+.post-log-badge.ok { background: rgba(16,185,129,.15); color: #34d399; }
+.post-log-badge.err { background: rgba(239,68,68,.15); color: #f87171; }
+.post-log-badge.wait { background: rgba(232,162,92,.15); color: #f0bb85; }
+.post-log-empty { padding: 18px; text-align: center; color: #75746f; font-family: "Segoe UI", sans-serif; }
+.post-log-live { width: 8px; height: 8px; border-radius: 50%; background: #3a3b3f; }
+.post-log-live.on { background: #35b29f; box-shadow: 0 0 0 3px rgba(53,178,159,.2); animation: postLogPulse 1.2s infinite; }
+@keyframes postLogPulse { 50% { opacity: .35; } }

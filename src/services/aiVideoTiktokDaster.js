@@ -1,10 +1,14 @@
 /**
  * src/services/aiVideoTiktokDaster.js
- * Runner Pipeline Khusus Konsep Daster & Homewear Try-On (5 Scene Locked Shot)
+ * BOT-AUTOUPLOAD | Daster & Homewear Try-On
+ * Sinkronisasi Status Sakelar Headless & Stabilitas Eksekusi
  */
 
 const { chromium } = require('playwright');
-const { spawn } = require('child_process');
+const { cleanupFailedChrome } = require('../core/chromeCleanup');
+const { startPluginChat } = require('./chatgptPlugin');
+const { withClipboardLock } = require('../core/clipboardLock');
+const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -13,48 +17,117 @@ const http = require('http');
 const { clipboard, nativeImage } = require('electron');
 
 const { runFlowProjectCreationTiktokDaster } = require('./flowVideoRunnerTiktokDaster');
+// Jeda, batas tunggu & flag Chrome menyesuaikan spek perangkat (Mode Perangkat Ringan)
+const { scaleMs, chromeLiteArgs } = require('../core/perfProfile');
 
-const ROOT_DIR = process.cwd();
-const TEMP_DIR = path.resolve(ROOT_DIR, 'temp');
-const STORYBOARD_DIR = path.resolve(ROOT_DIR, 'storage/storyboards');
-const STORYBOARD_META_JSON = path.resolve(STORYBOARD_DIR, 'metadata.json');
-const VIDEOS_DIR = path.resolve(ROOT_DIR, 'storage/videos');
-const BAHAN_VIDEO_DIR = path.resolve(ROOT_DIR, 'storage/bahan_video');
-const DEFAULT_USER_DATA_DIR = path.resolve(ROOT_DIR, 'sessions/chatgpt_video_profile');
+// Nama plugin ChatGPT (dipanggil dengan @ di chat baru)
+const PLUGIN_NAME = 'Affiliate TikTok Daster';
 
-[TEMP_DIR, STORYBOARD_DIR, VIDEOS_DIR, BAHAN_VIDEO_DIR, DEFAULT_USER_DATA_DIR].forEach((d) => {
-  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-});
+const CHAT_INPUT_SELECTORS = [
+  '#prompt-textarea',
+  'div#prompt-textarea',
+  'div.ProseMirror',
+  'div[contenteditable="true"]',
+  'textarea[data-id="root"]',
+  'div[role="textbox"]'
+].join(', ');
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }
 
-async function downloadToLocalFile(url, destPath) {
-  return new Promise((resolve, reject) => {
-    const client = url.startsWith('https') ? https : http;
-    const req = client.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return downloadToLocalFile(res.headers.location, destPath).then(resolve).catch(reject);
+function getFlowHeadlessConfig(customRoot) {
+  try {
+    const root = customRoot || process.cwd();
+    const candidatePaths = [
+      path.resolve(root, 'sessions/flow_profiles/accounts_config.json'),
+      path.resolve(__dirname, '../../sessions/flow_profiles/accounts_config.json'),
+      path.resolve(__dirname, '../sessions/flow_profiles/accounts_config.json'),
+      path.resolve(process.cwd(), 'sessions/flow_profiles/accounts_config.json')
+    ];
+
+    for (const p of candidatePaths) {
+      if (fs.existsSync(p)) {
+        const raw = fs.readFileSync(p, 'utf-8');
+        const cfg = JSON.parse(raw);
+        if (typeof cfg.headless === 'boolean') {
+          return cfg.headless;
+        }
       }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`Gagal unduh gambar: HTTP ${res.statusCode}`));
+    }
+  } catch (e) {}
+  return false;
+}
+
+function resolveSharedProfileDir(customPath, baseDir) {
+  if (customPath && fs.existsSync(customPath)) return customPath;
+  const root = baseDir || process.cwd();
+  return path.resolve(root, 'sessions/chatgpt_profile_shared');
+}
+
+function killZombieChromeOnPort(port) {
+  try {
+    if (os.platform() === 'win32') {
+      const netstat = execSync(`netstat -ano | findstr :${port}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+      const lines = netstat.trim().split('\n');
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && pid !== '0') {
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+        }
       }
-      const fileStream = fs.createWriteStream(destPath);
-      res.pipe(fileStream);
-      fileStream.on('finish', () => {
-        fileStream.close();
-        resolve(destPath);
-      });
-      fileStream.on('error', (err) => {
-        fs.unlink(destPath, () => {});
-        reject(err);
-      });
-    });
-    req.on('error', (err) => {
-      fs.unlink(destPath, () => {});
-      reject(err);
-    });
+    }
+  } catch (e) {}
+}
+
+function syncFromLegacyProfileIfEmpty(targetDir, rootDir) {
+  const hasCookies = (dir) => {
+    if (!fs.existsSync(dir)) return false;
+    return fs.existsSync(path.join(dir, 'Default', 'Network', 'Cookies')) ||
+           fs.existsSync(path.join(dir, 'Network', 'Cookies'));
+  };
+
+  if (hasCookies(targetDir)) return;
+
+  const sessionsDir = path.resolve(rootDir, 'sessions');
+  const legacyCandidates = [
+    'chatgpt_video_profile',
+    'chatgpt_profile_w1',
+    'chatgpt_video_profile_w1',
+    'chatgpt_profile'
+  ];
+
+  for (const name of legacyCandidates) {
+    const srcDir = path.resolve(sessionsDir, name);
+    if (hasCookies(srcDir)) {
+      try {
+        fs.cpSync(srcDir, targetDir, { recursive: true, force: true });
+        break;
+      } catch (e) {}
+    }
+  }
+}
+
+function purgeLocks(targetDir) {
+  if (!fs.existsSync(targetDir)) return;
+  ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'].forEach((f) => {
+    const p = path.join(targetDir, f);
+    if (fs.existsSync(p)) {
+      try { fs.unlinkSync(p); } catch (e) {}
+    }
+  });
+
+  const defaultDir = path.join(targetDir, 'Default');
+  ['Sessions', 'Current Session', 'Current Tabs', 'Last Session', 'Last Tabs'].forEach((item) => {
+    const target = path.join(defaultDir, item);
+    if (fs.existsSync(target)) {
+      try {
+        const stat = fs.statSync(target);
+        if (stat.isDirectory()) fs.rmSync(target, { recursive: true, force: true });
+        else fs.unlinkSync(target);
+      } catch (e) {}
+    }
   });
 }
 
@@ -75,7 +148,8 @@ function getOriginalChromeExecutablePath() {
   return candidates.find((p) => fs.existsSync(p));
 }
 
-async function waitForChromeReady(port, maxRetries = 25, delay = 400) {
+async function waitForChromeReady(port, maxRetries = 35, delay = 500) {
+  maxRetries = scaleMs(maxRetries);
   for (let i = 0; i < maxRetries; i++) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`);
@@ -87,14 +161,61 @@ async function waitForChromeReady(port, maxRetries = 25, delay = 400) {
   return false;
 }
 
-function ensureWorkerVideoProfileInitialized(targetWorkerDir) {
-  if (!fs.existsSync(targetWorkerDir)) fs.mkdirSync(targetWorkerDir, { recursive: true });
-  ['SingletonLock', 'SingletonCookie', 'SingletonSocket'].forEach((f) => {
-    const p = path.join(targetWorkerDir, f);
-    if (fs.existsSync(p)) {
-      try { fs.unlinkSync(p); } catch (e) {}
-    }
-  });
+async function downloadToLocalFile(url, destPath) {
+  if (!url || typeof url !== 'string') throw new Error('URL unduhan kosong');
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'Referer': 'https://shop.tiktok.com/'
+      }
+    });
+
+    if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    fs.writeFileSync(destPath, buffer);
+    return destPath;
+  } catch (err) {
+    return new Promise((resolve, reject) => {
+      const client = url.startsWith('https') ? https : http;
+      const options = {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          'Referer': 'https://shop.tiktok.com/'
+        },
+        rejectUnauthorized: false
+      };
+
+      const req = client.get(url, options, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return downloadToLocalFile(res.headers.location, destPath).then(resolve).catch(reject);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Gagal unduh gambar: HTTP ${res.statusCode}`));
+        }
+        const fileStream = fs.createWriteStream(destPath);
+        res.pipe(fileStream);
+        fileStream.on('finish', () => {
+          fileStream.close();
+          resolve(destPath);
+        });
+        fileStream.on('error', (e) => {
+          try { fs.unlinkSync(destPath); } catch (_) {}
+          reject(e);
+        });
+      });
+
+      req.on('error', (e) => {
+        try { fs.unlinkSync(destPath); } catch (_) {}
+        reject(e);
+      });
+    });
+  }
 }
 
 const STOP_BTN_SELECTOR = [
@@ -103,52 +224,95 @@ const STOP_BTN_SELECTOR = [
   'button[data-testid="stop-button"]'
 ].join(', ');
 
+async function findChatInputWithRetry(page, timeoutMs = 90000) {
+  timeoutMs = scaleMs(timeoutMs);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const input = page.locator(CHAT_INPUT_SELECTORS).first();
+    const isVisible = await input.isVisible().catch(() => false);
+    if (isVisible) return input;
+
+    const hasReloadBtn = await page.locator('button:has-text("Reload"), button:has-text("Muat ulang")').isVisible().catch(() => false);
+    if (hasReloadBtn) {
+      await page.locator('button:has-text("Reload"), button:has-text("Muat ulang")').first().click().catch(() => {});
+    }
+
+    await sleep(1000);
+  }
+  // Diagnostik: simpan screenshot & info halaman agar tahu penyebab macet (misal verifikasi Cloudflare)
+  const shotPath = path.join(os.tmpdir(), `chatgpt_stuck_${Date.now()}.png`);
+  await page.screenshot({ path: shotPath, fullPage: false }).catch(() => {});
+  const pageTitle = await page.title().catch(() => '');
+  throw new Error(`Timeout ${timeoutMs}ms menunggu kotak teks prompt ChatGPT muncul. Halaman: "${pageTitle}" (${page.url()}) · Screenshot: ${shotPath}`);
+}
+
 async function uploadFilesToChatGPT(page, filePaths) {
   const files = (Array.isArray(filePaths) ? filePaths : [filePaths]).filter((f) => f && fs.existsSync(f));
   if (files.length === 0) return false;
 
-  const chatInput = page.locator('#prompt-textarea, div.ProseMirror, div[contenteditable="true"]').first();
-  await chatInput.waitFor({ state: 'visible', timeout: 30000 });
+  const chatInput = await findChatInputWithRetry(page, 90000);
   await chatInput.click({ force: true });
   await sleep(400);
 
   for (const filePath of files) {
     let uploadSuccess = false;
 
+    // 1. Direct input file jika tersedia
     try {
-      const attachBtn = page.locator('button[aria-label*="Attach" i], button[aria-label*="Unggah" i], button[data-testid="attach-button"], button:has(svg.lucide-plus)').first();
-      if (await attachBtn.isVisible({ timeout: 2500 }).catch(() => false)) {
-        const [fileChooser] = await Promise.all([
-          page.waitForEvent('filechooser', { timeout: 5000 }),
-          attachBtn.click({ force: true })
-        ]);
-        await fileChooser.setFiles(filePath);
+      const fileInputLocator = page.locator('input[type="file"]').first();
+      if (await fileInputLocator.count() > 0) {
+        await fileInputLocator.setInputFiles(filePath);
         uploadSuccess = true;
       }
     } catch (e) {
       uploadSuccess = false;
     }
 
+    // 2. Tombol Attach (+)
     if (!uploadSuccess) {
       try {
-        const fileInput = page.locator('input[type="file"]').first();
-        if (await fileInput.count() > 0) {
-          await fileInput.setInputFiles(filePath);
-          uploadSuccess = true;
+        const attachBtn = page.locator([
+          'button[aria-label*="Attach" i]',
+          'button[aria-label*="Unggah" i]',
+          'button[aria-label*="File" i]',
+          'button[data-testid="attach-button"]',
+          'button:has(svg.lucide-plus)'
+        ].join(', ')).first();
+
+        if (await attachBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+          const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 6000 }).catch(() => null);
+          await attachBtn.click({ force: true });
+          await sleep(600);
+
+          const uploadMenuOption = page.locator('div[role="menuitem"]:has-text("Upload"), div[role="menuitem"]:has-text("Unggah"), div[role="menuitem"]:has-text("computer"), div[role="menuitem"]:has-text("komputer")').first();
+          if (await uploadMenuOption.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await uploadMenuOption.click({ force: true });
+          }
+
+          const fileChooser = await fileChooserPromise;
+          if (fileChooser) {
+            await fileChooser.setFiles(filePath);
+            uploadSuccess = true;
+          }
         }
       } catch (e) {
         uploadSuccess = false;
       }
     }
 
+    // 3. Fallback Clipboard Control+V
     if (!uploadSuccess) {
       try {
         const img = nativeImage.createFromPath(filePath);
         if (!img.isEmpty()) {
-          clipboard.writeImage(img);
-          await chatInput.click({ force: true });
-          await sleep(300);
-          await page.keyboard.press('Control+v');
+          clipboard.clear();
+          await withClipboardLock(async () => {
+            clipboard.writeImage(img);
+            await sleep(300);
+
+            await chatInput.click({ force: true });
+            await page.keyboard.press('Control+v');
+          });
           uploadSuccess = true;
         }
       } catch (err) {}
@@ -157,10 +321,17 @@ async function uploadFilesToChatGPT(page, filePaths) {
     await sleep(2500);
 
     await page.waitForFunction(() => {
-      const hasThumb = document.querySelectorAll('div[data-testid*="attachment"], div[class*="attachment"], img[alt*="attachment"], .prompt-media-preview').length > 0;
-      const isUploading = document.querySelectorAll('div[role="progressbar"], .animate-spin').length > 0;
+      const hasThumb = document.querySelectorAll([
+        'div[data-testid*="attachment"]',
+        'div[class*="attachment"]',
+        'img[alt*="attachment"]',
+        'div[class*="upload"]',
+        '.prompt-media-preview',
+        'div:has(> img[src*="blob:"])'
+      ].join(', ')).length > 0;
+      const isUploading = document.querySelectorAll('div[role="progressbar"], circle[stroke-dasharray], .animate-spin').length > 0;
       return hasThumb && !isUploading;
-    }, { timeout: 25000 }).catch(() => {});
+    }, { timeout: 45000 }).catch(() => {});
 
     await sleep(1000);
   }
@@ -168,12 +339,12 @@ async function uploadFilesToChatGPT(page, filePaths) {
 }
 
 async function triggerSend(page) {
-  const chatInput = page.locator('#prompt-textarea, div.ProseMirror, div[contenteditable="true"]').first();
-  await chatInput.focus().catch(() => {});
+  const chatInput = await findChatInputWithRetry(page, 45000).catch(() => null);
+  if (chatInput) await chatInput.focus().catch(() => {});
   await sleep(400);
 
   const sendBtn = page.locator('button[data-testid="send-button"], button[aria-label="Send prompt"], button[aria-label="Send"]').first();
-  if (await sendBtn.isVisible({ timeout: 2500 }).catch(() => false)) {
+  if (await sendBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
     await sendBtn.click().catch(() => {});
   } else {
     await page.keyboard.press('Enter');
@@ -184,14 +355,13 @@ async function triggerSend(page) {
 async function fillAndSendChat(page, text) {
   await page.waitForFunction(() => {
     const isStopGone = !document.querySelector('button[aria-label="Stop"], button[data-testid="stop-button"], button[aria-label="Hentikan"]');
-    const input = document.querySelector('div.ProseMirror, #prompt-textarea, div[contenteditable="true"]');
+    const input = document.querySelector('div.ProseMirror, #prompt-textarea, div[contenteditable="true"], textarea[data-id="root"]');
     return isStopGone && input && !input.getAttribute('disabled');
-  }, { timeout: 60000 }).catch(() => {});
+  }, { timeout: 75000 }).catch(() => {});
 
   await sleep(1000);
 
-  const chatInput = page.locator('div.ProseMirror, #prompt-textarea, div[contenteditable="true"]').first();
-  await chatInput.waitFor({ state: 'visible', timeout: 30000 });
+  const chatInput = await findChatInputWithRetry(page, 90000);
   await chatInput.click();
   await sleep(300);
 
@@ -201,108 +371,321 @@ async function fillAndSendChat(page, text) {
 
   await page.keyboard.insertText(text);
   await sleep(600);
+
   await triggerSend(page);
 }
 
-async function waitForSmartBotResponse(page, timeoutMs = 360000) {
+// Tunggu ChatGPT selesai menjawab. Selama menunggu: lapor tiap 20 dtk (lama menunggu + kalimat terakhir GPT)
+// agar jendela tersembunyi tidak terlihat macet; berhenti lebih awal bila ChatGPT menampilkan batas pemakaian.
+async function waitForSmartBotResponse(page, timeoutMs = 240000, onProgress = null) {
+  timeoutMs = scaleMs(timeoutMs);
   const assistantMsgSelector = 'div[data-message-author-role="assistant"], article[data-testid^="conversation-turn"]';
   const prevCount = await page.locator(assistantMsgSelector).count();
 
   const startWait = Date.now();
-  while (Date.now() - startWait < 35000) {
+  // Tombol "Start voice" (gelombang suara) muncul = ChatGPT sudah diam → tidak perlu menunggu sampai 45 dtk
+  const VOICE_BTN = 'button[data-testid="composer-speech-button"], button[aria-label*="voice" i], button[aria-label*="suara" i]';
+  let idleHits = 0;
+  while (Date.now() - startWait < 45000) {
     const currentCount = await page.locator(assistantMsgSelector).count();
     const isStopping = await page.locator(STOP_BTN_SELECTOR).first().isVisible().catch(() => false);
     if (currentCount > prevCount || isStopping) break;
+    const voiceReady = await page.locator(VOICE_BTN).first().isVisible().catch(() => false);
+    idleHits = voiceReady && Date.now() - startWait >= 3000 ? idleHits + 1 : 0;
+    if (idleHits >= 2) break;
+    await sleep(700);
+  }
+
+  let lastReport = Date.now();
+  while (Date.now() - startWait < timeoutMs) {
+    const state = await page.evaluate((stopSel) => {
+      const busy = Boolean(document.querySelector(stopSel) || document.querySelector('.result-streaming'));
+      const turns = document.querySelectorAll('div[data-message-author-role="assistant"]');
+      const txt = (turns[turns.length - 1]?.innerText || '').replace(/\s+/g, ' ').trim();
+      const limited = /you've (hit|reached) (the|your) .*limit|rate limit|too many requests|batas (pemakaian|penggunaan)/i.test(txt);
+      return { busy, limited, snippet: txt.length > 90 ? '…' + txt.slice(-90) : txt };
+    }, STOP_BTN_SELECTOR).catch(() => ({ busy: false, limited: false, snippet: '' }));
+    if (state.limited) throw new Error(`ChatGPT membatasi pemakaian akun: "${state.snippet}"`);
+    if (!state.busy) break;
+    if (onProgress && Date.now() - lastReport >= 20000) {
+      lastReport = Date.now();
+      onProgress(`Masih menunggu ChatGPT (${Math.round((Date.now() - startWait) / 1000)} dtk)${state.snippet ? ` · GPT: "${state.snippet}"` : ''}`);
+    }
     await sleep(1000);
   }
 
-  try {
-    const stopBtn = page.locator(STOP_BTN_SELECTOR).first();
-    if (await stopBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await stopBtn.waitFor({ state: 'detached', timeout: timeoutMs }).catch(() => {});
-    }
-  } catch (e) {}
-
-  await page.waitForFunction(() => !document.querySelector('.result-streaming'), { timeout: timeoutMs }).catch(() => {});
   await page.waitForFunction(() => {
-    const input = document.querySelector('#prompt-textarea, div.ProseMirror, div[contenteditable="true"]');
-    return input && !input.getAttribute('disabled') && !document.querySelector('button[aria-label="Stop"], button[data-testid="stop-button"]');
-  }, { timeout: 35000 }).catch(() => {});
+    const input = document.querySelector('#prompt-textarea, div.ProseMirror, div[contenteditable="true"], textarea[data-id="root"]');
+    const isInputReady = input && !input.getAttribute('disabled');
+    const isStopGone = !document.querySelector('button[aria-label="Stop"], button[data-testid="stop-button"]');
+    return isInputReady && isStopGone;
+  }, { timeout: 45000 }).catch(() => {});
 
-  await sleep(2500);
+  await sleep(800);
 }
 
-async function extractAndSaveAllDasterScenes(page, destDir, onProgress = () => {}) {
-  onProgress('Mengumpulkan dan menyimpan 5 Scene Daster hasil generate DALL-E...');
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
-  await sleep(2500);
+/**
+ * Menjawab pertanyaan konfirmasi tambahan ChatGPT (kadang muncul, kadang tidak),
+ * misal: "apakah pakaian hijau pada foto kedua yang ingin dipromosikan?".
+ * Aturan: jika ChatGPT sedang mengetik / membuat gambar → diam. Jika ChatGPT sudah diam (stabil),
+ * giliran terakhir adalah balasan ChatGPT, dan balasan itu TANPA gambar → anggap pertanyaan & jawab.
+ * Selalu dijawab lewat teks di kolom prompt. Mengembalikan true jika jawaban terkirim.
+ */
+async function readLastChatTurn(page) {
+  const isStreaming = await page.locator(STOP_BTN_SELECTOR).first().isVisible().catch(() => false);
+  const turn = await page.evaluate(() => {
+    // Giliran terakhir yang berisi teks (user / assistant); elemen terakhir kadang kosong
+    const turns = Array.from(document.querySelectorAll('div[data-message-author-role]'))
+      .filter((el) => (el.innerText || '').trim().length > 0 || el.querySelector('img'));
+    const last = turns[turns.length - 1];
+    if (!last) return null;
+    const hasImage = Array.from(last.querySelectorAll('img')).some((img) => (img.naturalWidth || img.width) >= 200);
+    return {
+      role: last.getAttribute('data-message-author-role'),
+      text: (last.innerText || '').trim().toLowerCase(),
+      hasImage
+    };
+  }).catch(() => null);
+  return turn ? { ...turn, isStreaming } : null;
+}
 
-  const imageLocator = page.locator('div[data-message-author-role="assistant"] img:not([alt*="avatar" i]):not([src*="avatar"]):not([width="24"]):not([width="32"])');
-  const count = await imageLocator.count();
-  const savedPaths = [];
+async function tryAnswerConfirmationQuestion(page, dasterClothingMode, onProgress = () => {}) {
+  const isConvert = String(dasterClothingMode || '').toLowerCase() === 'convert';
 
-  for (let i = 0; i < count; i++) {
-    const imgEl = imageLocator.nth(i);
-    const destPath = path.join(destDir, `scene_daster_${i + 1}_${Date.now()}.png`);
+  const first = await readLastChatTurn(page);
+  if (!first || first.isStreaming || first.role !== 'assistant' || first.hasImage) return false;
 
-    try {
-      const base64String = await imgEl.evaluate(async (img) => {
-        const src = img.currentSrc || img.src;
-        if (!src) return null;
-        try {
-          const res = await fetch(src, { credentials: 'include' });
-          if (res.ok) {
-            const blob = await res.blob();
-            return await new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result.replace(/^data:image\/[a-zA-Z+]+;base64,/, ''));
-              reader.onerror = () => resolve(null);
-              reader.readAsDataURL(blob);
-            });
-          }
-        } catch (e) {}
-        return null;
-      });
+  // Tanda ChatGPT sedang membuat gambar → jangan dijawab
+  if (/membuat gambar|creating image|generating image|sedang membuat|image created/.test(first.text)) return false;
 
-      if (base64String && base64String.length > 5000) {
-        fs.writeFileSync(destPath, Buffer.from(base64String, 'base64'));
-        savedPaths.push(destPath);
-      } else {
-        await imgEl.screenshot({ path: destPath });
-        if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000) {
-          savedPaths.push(destPath);
+  // Jika 10 detik tidak ada render gambar (teks tidak berubah, tidak mengetik) → anggap pertanyaan, jawab
+  await sleep(10000);
+  const second = await readLastChatTurn(page);
+  if (!second || second.isStreaming || second.role !== 'assistant' || second.hasImage || second.text !== first.text) return false;
+
+  const answerText = isConvert
+    ? 'Ya, benar. Ubah menjadi daster panjang terusan dengan motif/warna serupa, wajah tetap sama seperti foto model. Jangan bertanya lagi, langsung buat 5 scene kanvas storyboard sekarang.'
+    : 'Ya, benar. Pertahankan busana persis seperti foto produk (atasan dan bawahan persis aslinya), wajah tetap sama seperti foto model. Jangan bertanya lagi, langsung buat 5 scene kanvas storyboard sekarang.';
+
+  onProgress(`ChatGPT bertanya konfirmasi → menjawab via prompt (${isConvert ? 'Daster Panjang' : 'Pakaian Asli'})...`);
+  await fillAndSendChat(page, answerText);
+  return true;
+}
+
+async function handleClothingConfirmation(page, dasterClothingMode, onProgress = () => {}) {
+  await sleep(1500);
+  const isConvert = String(dasterClothingMode || '').toLowerCase() === 'convert';
+
+  const btnSubmitCandidate = page.locator([
+    'button:has-text("Buat 5 Scene AI")',
+    'button:has-text("Buat 5 Scene")',
+    'div[role="button"]:has-text("Buat 5 Scene")',
+    'button:has-text("Lanjutkan")'
+  ].join(', ')).first();
+
+  const isInteractiveVisible = await btnSubmitCandidate.isVisible({ timeout: 6000 }).catch(() => false);
+
+  if (isInteractiveVisible) {
+    onProgress(`Mendeteksi tombol pilihan pakaian (${isConvert ? 'Ubah Menjadi Daster Panjang' : 'Pertahankan Pakaian Asli'})...`);
+
+    await page.evaluate((convertMode) => {
+      const items = Array.from(document.querySelectorAll('label, div[role="radio"], div[role="button"], span, p, div'));
+      const targetText = convertMode ? 'jadikan daster panjang' : 'pertahankan';
+      for (const el of items) {
+        const txt = (el.innerText || el.textContent || '').toLowerCase();
+        if (txt.includes(targetText)) {
+          const input = el.querySelector('input[type="radio"]') || el;
+          input.click();
+          break;
         }
       }
-    } catch (e) {}
+    }, isConvert).catch(() => {});
+
+    await sleep(800);
+    await btnSubmitCandidate.click({ force: true }).catch(async () => {
+      await btnSubmitCandidate.dispatchEvent('click');
+    });
+
+    onProgress('Menunggu ChatGPT membuat kanvas 5 scene...');
+    await waitForSmartBotResponse(page, 360000, onProgress);
+    return;
   }
 
-  return savedPaths;
+  if (await tryAnswerConfirmationQuestion(page, dasterClothingMode, onProgress)) {
+    await waitForSmartBotResponse(page, 360000, onProgress);
+  }
 }
 
-// Pipeline Utama Daster Try-On
-async function runTikTokDasterPipeline({
-  bannerImagePath,
-  customCharacterPath,
-  flowRatio = '9:16',
-  flowModel = 'Veo 3.1 - Lite',
-  flowResolution = '720p',
-  flowDuration = '8 Detik',
-  workerId = 1,
-  onProgress = () => {}
-}) {
+async function extractAndSaveStoryboardImage(page, destStoryboard, onProgress = () => {}, dasterClothingMode = '') {
+  onProgress('Mencari dan mengunduh gambar kanvas storyboard bersih...');
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+  await sleep(1500);
+
+  const imageCandidateSelectors = [
+    'div[data-message-author-role="assistant"] img[alt*="Generated" i]',
+    'div[data-message-author-role="assistant"] img[src*="oaidalle"]',
+    'div[data-message-author-role="assistant"] img[src*="dall-e"]',
+    'div[data-message-author-role="assistant"] img[src*="backend-api"]',
+    'div[data-message-author-role="assistant"] img[src*="files.oaiusercontent.com"]',
+    'div[data-message-author-role="assistant"] img[src*="blob:"]',
+    'div[data-message-author-role="assistant"] img:not([alt*="avatar" i]):not([src*="avatar"]):not([width="24"]):not([width="32"])',
+    'img[alt*="Generated" i]',
+    'img[src*="oaidalle"]'
+  ];
+
+  let targetImg = null;
+  const maxWait = 180000;
+  let startTime = Date.now();
+  let confirmAnswered = 0;
+
+  while (Date.now() - startTime < maxWait) {
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+
+    // Pertanyaan konfirmasi bisa muncul terlambat: jawab (maks 2x) lalu reset batas tunggu
+    if (confirmAnswered < 2 && await tryAnswerConfirmationQuestion(page, dasterClothingMode, onProgress)) {
+      confirmAnswered++;
+      startTime = Date.now();
+      await sleep(3000);
+      continue;
+    }
+
+    for (const sel of imageCandidateSelectors) {
+      const loc = page.locator(sel).last();
+      const count = await loc.count().catch(() => 0);
+      if (count > 0) {
+        const isReady = await loc.evaluate((img) => {
+          return img && img.complete && (img.naturalWidth >= 200 || img.width >= 200);
+        }).catch(() => false);
+
+        if (isReady) {
+          targetImg = loc;
+          break;
+        }
+      }
+    }
+
+    if (targetImg) break;
+    const waited = Math.round((Date.now() - startTime) / 1000);
+    if (waited > 0 && waited % 20 < 2) {
+      // Sertakan cuplikan pesan terakhir ChatGPT agar terlihat apa yang sedang terjadi di jendela tersembunyi
+      const snippet = await page.evaluate(() => {
+        const assistants = document.querySelectorAll('div[data-message-author-role="assistant"]');
+        const last = assistants[assistants.length - 1];
+        const txt = (last?.innerText || '').replace(/\s+/g, ' ').trim();
+        return txt.length > 90 ? '…' + txt.slice(-90) : txt;
+      }).catch(() => '');
+      const isStreaming = await page.locator(STOP_BTN_SELECTOR).first().isVisible().catch(() => false);
+      onProgress(`Masih menunggu gambar kanvas dari ChatGPT (${waited} dtk${isStreaming ? ' · GPT sedang memproses' : ''})${snippet ? ` · GPT: "${snippet}"` : ''}`);
+    }
+    await sleep(2000);
+  }
+
+  if (!targetImg) {
+    const shotPath = path.join(os.tmpdir(), `chatgpt_noimage_${Date.now()}.png`);
+    await page.screenshot({ path: shotPath }).catch(() => {});
+    throw new Error(`Gambar hasil render tidak ditemukan. Screenshot: ${shotPath}`);
+  }
+
+  await targetImg.scrollIntoViewIfNeeded().catch(() => {});
+  await sleep(2000);
+
+  try {
+    const base64String = await targetImg.evaluate(async (img) => {
+      const src = img.currentSrc || img.src;
+      if (!src) return null;
+
+      try {
+        const res = await fetch(src, { credentials: 'include' });
+        if (res.ok) {
+          const blob = await res.blob();
+          return await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const result = reader.result || '';
+              resolve(result.replace(/^data:image\/[a-zA-Z+]+;base64,/, ''));
+            };
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+        }
+      } catch (e) {}
+
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || 1024;
+        canvas.height = img.naturalHeight || 1024;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+      } catch (e) {
+        return null;
+      }
+    });
+
+    if (base64String && base64String.length > 5000) {
+      const imgBuffer = Buffer.from(base64String, 'base64');
+      fs.writeFileSync(destStoryboard, imgBuffer);
+      const nativeImg = nativeImage.createFromBuffer(imgBuffer);
+      onProgress('Gambar kanvas storyboard bersih berhasil disimpan!');
+      return true;
+    }
+  } catch (err) {}
+
+  await targetImg.screenshot({ path: destStoryboard });
+  return fs.existsSync(destStoryboard) && fs.statSync(destStoryboard).size > 1000;
+}
+
+async function runTikTokDasterPipeline(options = {}) {
+  const {
+    bannerImagePath,
+    customCharacterPath,
+    dasterClothingMode = 'original',
+    flowRatio = '9:16',
+    flowModel = 'Veo 3.1 - Lite',
+    flowResolution = '720p',
+    flowDuration = '8 Detik',
+    flowOutputCount = '1',
+    chatgptProfileDir,
+    profileDir,
+    dataRoot,
+    onProgress = () => {}
+  } = options;
+
   let browser = null;
   let chromeProcess = null;
-  const currentWorkerId = Number(workerId || 1);
+
+  // PRIORITAS PENENTUAN STATUS HEADLESS:
+  // 1. Nilai boolean dari parameter options (jika dikirim true atau false)
+  // 2. Pembacaan dari file JSON accounts_config.json
+  // 3. Default: false (Jendela terlihat dan responsif)
+  let isHeadless = false;
+  if (typeof options.headless === 'boolean') {
+    isHeadless = options.headless;
+  } else {
+    const diskHeadless = getFlowHeadlessConfig(dataRoot);
+    if (typeof diskHeadless === 'boolean') {
+      isHeadless = diskHeadless;
+    }
+  }
+
+  const ROOT_DIR = dataRoot || process.cwd();
+  const STORYBOARD_DIR = path.resolve(ROOT_DIR, 'storage/storyboards');
+  const BAHAN_VIDEO_DIR = path.resolve(ROOT_DIR, 'storage/bahan_video');
+  const targetUserDataDir = chatgptProfileDir || profileDir || resolveSharedProfileDir(null, ROOT_DIR);
+
+  [STORYBOARD_DIR, BAHAN_VIDEO_DIR, targetUserDataDir].forEach((d) => {
+    if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  });
 
   try {
     const timestamp = Date.now();
-    const currentProjectDir = path.join(BAHAN_VIDEO_DIR, `proyek_tiktok_daster_${timestamp}_w${currentWorkerId}`);
+    const currentProjectDir = path.join(BAHAN_VIDEO_DIR, `proyek_tiktok_daster_${timestamp}`);
     if (!fs.existsSync(currentProjectDir)) fs.mkdirSync(currentProjectDir, { recursive: true });
 
     let localProductBannerPath = '';
     if (bannerImagePath && (bannerImagePath.startsWith('http://') || bannerImagePath.startsWith('https://'))) {
-      onProgress('Mengunduh foto daster dari Showcase TikTok...');
-      const downloadedFile = path.join(currentProjectDir, `product_daster_${timestamp}.png`);
+      onProgress('Mengunduh foto produk dari Showcase TikTok...');
+      const downloadedFile = path.join(currentProjectDir, `product_showcase_${timestamp}.png`);
       await downloadToLocalFile(bannerImagePath, downloadedFile);
       localProductBannerPath = downloadedFile;
     } else {
@@ -310,25 +693,27 @@ async function runTikTokDasterPipeline({
     }
 
     if (!localProductBannerPath || !fs.existsSync(localProductBannerPath)) {
-      throw new Error('Foto produk daster tidak ditemukan.');
+      throw new Error('Foto produk dari showcase tidak ditemukan.');
     }
     if (!customCharacterPath || !fs.existsSync(customCharacterPath)) {
-      throw new Error('Foto model/karakter daster belum dipilih.');
+      throw new Error('Foto karakter belum dipilih.');
     }
 
-    const targetUserDataDir = currentWorkerId === 1
-      ? DEFAULT_USER_DATA_DIR
-      : path.resolve(ROOT_DIR, `sessions/chatgpt_video_profile_worker_${currentWorkerId}`);
+    syncFromLegacyProfileIfEmpty(targetUserDataDir, ROOT_DIR);
+    purgeLocks(targetUserDataDir);
 
-    ensureWorkerVideoProfileInitialized(targetUserDataDir);
+    // Port Chrome ChatGPT per worker (worker 2 = 9243, dst.) agar beberapa worker bisa berjalan bersamaan
+    const cdpPort = 9233 + ((Number(options.workerId) || 1) - 1) * 10;
+    killZombieChromeOnPort(cdpPort);
+    await sleep(400);
 
-    const cdpPort = 9230 + currentWorkerId;
-    const windowPosArg = currentWorkerId === 1 ? '--window-position=0,0' : '--window-position=960,0';
     const chromeExe = getOriginalChromeExecutablePath();
     if (!chromeExe) throw new Error('Google Chrome tidak ditemukan di sistem.');
 
-    onProgress(`[Worker ${currentWorkerId}] Membuka sesi Chrome ChatGPT (Port ${cdpPort})...`);
-    chromeProcess = spawn(chromeExe, [
+    onProgress(`Membuka sesi Chrome ChatGPT Daster (Port ${cdpPort} · Headless: ${isHeadless ? 'Aktif' : 'Nonaktif'})...`);
+
+    // Jaga agar jendela ChatGPT selalu memiliki layer rendering aktif
+    const chromeArgs = [
       `--remote-debugging-port=${cdpPort}`,
       `--user-data-dir=${targetUserDataDir}`,
       '--no-first-run',
@@ -336,87 +721,165 @@ async function runTikTokDasterPipeline({
       '--disable-session-crashed-bubble',
       '--hide-crash-restore-bubble',
       '--disable-restore-session-state',
-      '--window-size=960,1000',
-      windowPosArg,
-      'https://chatgpt.com/'
-    ], { detached: false, stdio: 'ignore' });
+      '--window-size=1280,900',
+      '--disable-blink-features=AutomationControlled',
+      '--lang=id-ID'
+    ];
 
-    await waitForChromeReady(cdpPort, 25, 400);
+    if (isHeadless) {
+      // ChatGPT (Cloudflare) memblokir --headless, jadi pakai Chrome asli dengan jendela di luar layar
+      chromeArgs.push(
+        '--window-position=-32000,-32000',
+        '--mute-audio',
+        // Cegah Chrome menjeda render/timer karena jendela dianggap tertutup (occluded)
+        '--disable-features=CalculateNativeWinOcclusion',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-background-timer-throttling'
+      );
+    } else {
+      chromeArgs.push('--window-position=0,0');
+    }
+
+    chromeArgs.push('https://chatgpt.com/');
+
+    chromeProcess = spawn(chromeExe, [...chromeArgs, ...chromeLiteArgs()], { detached: false, stdio: 'ignore' });
+
+    await waitForChromeReady(cdpPort, 35, 500);
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
 
     const context = browser.contexts()[0] || (await browser.newContext());
     let page = context.pages().find((p) => p.url().includes('chatgpt.com')) || context.pages()[0];
     if (!page) page = await context.newPage();
 
-    // 1. Masuk ke Custom GPT Daster
-    const dasterCustomGptUrl = 'https://chatgpt.com/g/g-6ad63e2e97a8819185f9474000db0602-affiliate-tiktok-daster';
-    onProgress('Menuju Custom GPT: Affiliate TikTok Daster...');
-    await page.goto(dasterCustomGptUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
-    await sleep(3500);
-
-    const chatInput = page.locator('#prompt-textarea, div.ProseMirror, div[contenteditable="true"]').first();
-    await chatInput.waitFor({ state: 'visible', timeout: 45000 });
-
-    // 2. Kirim RUN
-    onProgress('Tahap 1: Menjalankan perintah RUN Daster...');
-    const runBtn = page.locator('button:has-text("RUN"), div[role="button"]:has-text("RUN")').first();
-    if (await runBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
-      await runBtn.click();
-      await sleep(1000);
-      await triggerSend(page);
-    } else {
-      await fillAndSendChat(page, 'RUN');
+    if (isHeadless) {
+      await page.setViewportSize({ width: 1280, height: 900 }).catch(() => {});
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      }).catch(() => {});
     }
-    await waitForSmartBotResponse(page, 75000);
 
-    // 3. Unggah Karakter & Produk Daster (Tanpa Pinterest)
-    onProgress('Tahap 2: Mengunggah Foto Model Karakter & Foto Produk Daster...');
+    await page.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => {});
+    await sleep(2500);
+
+    const isLoginState = await page.evaluate(() => {
+      const u = window.location.href.toLowerCase();
+      const hasLoginBtn = !!document.querySelector('button[data-testid="login-button"], a[href*="/login"], button:has-text("Log in")');
+      return u.includes('/auth/') || u.includes('/login') || hasLoginBtn;
+    }).catch(() => false);
+
+    if (isLoginState) {
+      if (isHeadless) {
+        // Tampilkan jendela ke layar agar login bisa diselesaikan manual
+        try {
+          const cdpSession = await context.newCDPSession(page);
+          const { windowId } = await cdpSession.send('Browser.getWindowForTarget');
+          await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { left: 0, top: 0 } });
+        } catch (e) {}
+      }
+      onProgress('Silakan selesaikan login ChatGPT di jendela browser yang terbuka...');
+      await page.waitForFunction(() => {
+        const u = window.location.href.toLowerCase();
+        const input = document.querySelector('#prompt-textarea, div.ProseMirror, div[contenteditable="true"], textarea[data-id="root"]');
+        return !u.includes('/auth/') && !u.includes('/login') && !!input;
+      }, { timeout: 300000 }).catch(() => {});
+      await sleep(2000);
+    }
+
+    // Storyboard kini lewat plugin ChatGPT (@Nama Plugin) di chat baru, bukan link Custom GPT
+    onProgress('Tahap 1: Menjalankan perintah RUN Daster...');
+    await startPluginChat(page, PLUGIN_NAME, 'RUN', onProgress);
+    await waitForSmartBotResponse(page, 75000, onProgress);
+
+    onProgress('Tahap 2: Mengunggah foto model dan busana produk...');
     const isUploaded = await uploadFilesToChatGPT(page, [customCharacterPath, localProductBannerPath]);
-    if (!isUploaded) throw new Error('Gagal mengunggah foto model dan daster ke ChatGPT.');
+    if (!isUploaded) throw new Error('Gagal mengunggah foto model dan produk daster ke ChatGPT.');
     await sleep(1500);
+
+    // Sama seperti manual: cukup kirim 2 foto tanpa teks. Hanya mode "Ubah jadi Daster" yang butuh instruksi.
+    if (String(dasterClothingMode || '').toLowerCase() === 'convert') {
+      const chatInput = await findChatInputWithRetry(page, 45000).catch(() => null);
+      if (chatInput) {
+        await chatInput.click().catch(() => {});
+        await page.keyboard.press('End').catch(() => {});
+        await page.keyboard.insertText('MODE: DASTER. Ubah busana produk menjadi daster panjang terusan dengan motif/warna serupa.').catch(() => {});
+        await sleep(400);
+      }
+    }
+
     await triggerSend(page);
 
-    // 4. Tunggu render 5 Scene Daster
-    onProgress('Tahap 3: Menunggu DALL-E menghasilkan 5 Scene Daster berurutan...');
-    await waitForSmartBotResponse(page, 360000);
+    onProgress('Tahap 3: Menunggu ChatGPT membuat gambar & prompt video...');
+    await waitForSmartBotResponse(page, 150000, onProgress);
 
-    // 5. Unduh seluruh scene
-    const savedScenes = await extractAndSaveAllDasterScenes(page, currentProjectDir, onProgress);
-    const destMaster = savedScenes[0] || path.join(currentProjectDir, 'scene_daster_1.png');
+    await handleClothingConfirmation(page, dasterClothingMode, onProgress);
 
-    // 6. Ekstrak rekapitulasi teks prompt video (senyap / mute)
-    onProgress('Mengekstrak rekapitulasi teks prompt video motion Daster...');
-    const formattedPromptsResult = await page.evaluate(() => {
-      const assistantMsgs = Array.from(document.querySelectorAll('div[data-message-author-role="assistant"]'));
-      if (assistantMsgs.length === 0) return '';
-      const lastMsg = assistantMsgs[assistantMsgs.length - 1];
-      return (lastMsg.innerText || lastMsg.textContent || '').trim();
-    });
+    const destStoryboard = path.join(STORYBOARD_DIR, `storyboard_${timestamp}.png`);
+    const destProject = path.join(currentProjectDir, 'storyboard_canvas.png');
+
+    const isDownloaded = await extractAndSaveStoryboardImage(page, destStoryboard, onProgress, dasterClothingMode);
+    if (!isDownloaded || !fs.existsSync(destStoryboard)) {
+      throw new Error('Gagal mengunduh gambar kanvas storyboard.');
+    }
+
+    fs.copyFileSync(destStoryboard, destProject);
+    onProgress('Gambar kanvas storyboard daster berhasil disimpan!');
+
+    // Salin prompt MURNI dari kotak kode ("Plain text") jawaban GPT, tanpa diubah sedikit pun.
+    // Tunggu sampai GPT selesai menulis (tombol stop hilang & isi kotak kode tidak berubah lagi).
+    onProgress('Menyalin prompt video dari kotak kode ChatGPT (tanpa diubah)...');
+    const readCodeBlockPrompt = () => page.evaluate(() => {
+      // Tampilan ChatGPT baru: <div data-code-block="true"> … <code>isi</code> (tanpa <pre>, tanpa penanda role pesan).
+      // Ambil kotak kode TERAKHIR di percakapan; textContent = persis hasil tombol "Copy code".
+      const blocks = Array.from(document.querySelectorAll('[data-code-block="true"] code, pre code'));
+      const last = blocks[blocks.length - 1];
+      return last ? last.textContent.replace(/\s+$/, '') : '';
+    }).catch(() => '');
+
+    let rawPrompt = '';
+    let stableCount = 0;
+    const promptDeadline = Date.now() + 120000;
+    while (Date.now() < promptDeadline) {
+      const streaming = await page.locator(STOP_BTN_SELECTOR).first().isVisible().catch(() => false);
+      const current = await readCodeBlockPrompt();
+      if (current && current === rawPrompt && !streaming) {
+        if (++stableCount >= 2) break;
+      } else {
+        stableCount = 0;
+      }
+      rawPrompt = current;
+      await sleep(1500);
+    }
+
+    if (!rawPrompt.trim()) {
+      const shotPath = path.join(os.tmpdir(), `chatgpt_noprompt_${Date.now()}.png`);
+      await page.screenshot({ path: shotPath }).catch(() => {});
+      throw new Error(`Prompt video (kotak kode) dari ChatGPT tidak ditemukan. Screenshot: ${shotPath}`);
+    }
+    onProgress(`Prompt video tersalin (${rawPrompt.length} karakter).`);
+
+    const formattedPromptsResult = rawPrompt.trim();
 
     const projectPromptPath = path.join(currentProjectDir, 'prompt_video.txt');
     fs.writeFileSync(projectPromptPath, formattedPromptsResult, 'utf-8');
 
-    if (browser) {
-      await browser.close().catch(() => {});
-      browser = null;
-    }
-    if (chromeProcess && !chromeProcess.killed) {
-      try { chromeProcess.kill(); } catch (e) {}
-      chromeProcess = null;
-    }
-    await sleep(2000);
+    if (browser) await browser.close().catch(() => {});
+    if (chromeProcess && !chromeProcess.killed) try { chromeProcess.kill(); } catch (e) {}
 
-    // 7. Render ke Google Flow Daster
-    onProgress(`Menghubungkan ke Google Flow Daster (${flowModel} · ${flowResolution} · ${flowDuration})...`);
+    onProgress(`Menghubungkan ke Google Flow Daster (${flowModel} · ${flowResolution} · ${flowDuration} · x${flowOutputCount || '1'})...`);
+
+    // Alur Google Flow selalu aman dijalankan sesuai sakelar isHeadless
     const flowResult = await runFlowProjectCreationTiktokDaster({
+      workerId: Number(options.workerId) || 1,
       projectFolder: currentProjectDir,
-      storyboardImagePath: destMaster,
-      sceneImages: savedScenes,
+      storyboardImagePath: destStoryboard,
       promptText: formattedPromptsResult,
       flowRatio: flowRatio || '9:16',
       flowModel: flowModel || 'Veo 3.1 - Lite',
       flowResolution: flowResolution || '720p',
       flowDuration: flowDuration || '8 Detik',
+      flowOutputCount: flowOutputCount || '1',
+      headless: isHeadless,
       onProgress: (status) => onProgress(status)
     });
 
@@ -424,25 +887,28 @@ async function runTikTokDasterPipeline({
       throw new Error(flowResult?.error || 'Gagal saat memproses rendering di Google Flow TikTok Daster.');
     }
 
-    onProgress('🎉 Sukses Total! Video Daster Try-On berhasil dibuat.');
+    onProgress('🎉 Sukses! Seluruh 5 Scene Daster & Video Motion selesai dibuat.');
 
     return {
       success: true,
       concept: 'daster',
-      workerId: currentWorkerId,
       projectFolder: currentProjectDir,
       bannerUsed: localProductBannerPath,
       characterUsed: customCharacterPath,
-      storyboardImages: savedScenes,
+      storyboardImages: [destStoryboard],
       promptText: formattedPromptsResult,
       videoPath: flowResult.videoPath,
       storagePath: flowResult.storagePath,
-      fileName: flowResult.fileName,
+      fileName: path.basename(flowResult.videoPath || ''),
       thumbnailPath: flowResult.thumbnailPath,
       flowResult
     };
   } catch (error) {
-    console.error('[TikTok Daster Pipeline Error]:', error);
+    // Gagal → tutup tuntas Chrome ChatGPT (termasuk proses anak) & lepas kunci profil agar bisa langsung dijalankan lagi
+    if (browser) await browser.close().catch(() => {});
+    browser = null;
+    await cleanupFailedChrome({ proc: chromeProcess, profileDir: targetUserDataDir, onProgress });
+    chromeProcess = null;
     return { success: false, error: error.message };
   } finally {
     if (browser) await browser.close().catch(() => {});

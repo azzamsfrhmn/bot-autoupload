@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { shell } = require('electron');
 
-const ROOT_DIR = path.resolve(__dirname, '../../');
+const ROOT_DIR = process.cwd();
 const SESSIONS_DIR = path.join(ROOT_DIR, 'sessions');
 const IMAGES_DIR = path.join(SESSIONS_DIR, 'generated_images');
 const METADATA_FILE = path.join(IMAGES_DIR, 'metadata.json');

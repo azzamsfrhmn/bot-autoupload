@@ -1,0 +1,1115 @@
+{
+ "judul": "Bikin Kaca dari Nol",
+ "names": {
+  "B": "BONGO",
+  "D": "DODO"
+ },
+ "scenes": [
+  {
+   "who": "B",
+   "say": "Do, kita bikin kaca sendiri yuk, dari nol!",
+   "cap": "Do, kita bikin *kaca sendiri yuk, dari nol!",
+   "env": "beach-day",
+   "shot": "wide",
+   "label": "BIKIN KACA DARI NOL",
+   "title": "Bikin *kaca",
+   "nametags": true,
+   "bongo": {
+    "pose": "wave"
+   },
+   "dodo": {
+    "pose": "idle"
+   },
+   "props": [],
+   "effects": [],
+   "pills": []
+  },
+  {
+   "who": "D",
+   "say": "Gas! Bahannya cuma satu doang, pasir pantai.",
+   "cap": "Gas! Bahannya cuma satu doang: *pasir *pantai.",
+   "env": "beach-day",
+   "shot": "side-right",
+   "label": "BAHAN",
+   "title": "Bahan: *pasir",
+   "dodo": {
+    "action": "dig",
+    "pos": [
+     1.2,
+     0,
+     0.75
+    ],
+    "pose": "idle"
+   },
+   "bongo": {
+    "pos": [
+     -0.9,
+     0,
+     -0.7
+    ],
+    "ry": 0.7,
+    "pose": "idle"
+   },
+   "pills": [
+    {
+     "text": "PASIR PANTAI",
+     "at": "shovel",
+     "dy": 0,
+     "delay": 1.4
+    }
+   ],
+   "props": [],
+   "effects": []
+  },
+  {
+   "who": "B",
+   "say": "Hah, pasir? Becanda lu ya!",
+   "cap": "Hah, pasir? *Becanda lu ya.",
+   "env": "beach-day",
+   "shot": "close-left",
+   "label": "BAHAN",
+   "title": "Cuma *pasir?",
+   "bongo": {
+    "pose": "laugh"
+   },
+   "dodo": {
+    "pos": [
+     1,
+     0,
+     0.4
+    ],
+    "ry": -0.7,
+    "pose": "idle"
+   },
+   "effects": [
+    {
+     "type": "haha",
+     "on": "bongo"
+    }
+   ],
+   "props": [],
+   "pills": []
+  },
+  {
+   "who": "D",
+   "say": "Serius gue. Pasir itu isinya silika, butiran kristal kecil. Jendela, gelas, sampe layar HP lu, semua dari situ.",
+   "cap": "Serius gue. Pasir itu isinya *silika, butiran kristal kecil. Jendela, gelas, sampe *layar *HP lu, semua dari situ.",
+   "label": "BAHAN",
+   "title": "Isinya *silika",
+   "parts": [
+    {
+     "type": "lens",
+     "env": "beach-day",
+     "shot": "medium",
+     "grains": "sand",
+     "dodo": {
+      "pos": [
+       0.95,
+       0,
+       0.8
+      ],
+      "ry": -1.57,
+      "pose": "lookdown"
+     },
+     "bongo": {
+      "pos": [
+       -1.1,
+       0,
+       0.45
+      ],
+      "ry": 0.9,
+      "pose": "lookdown"
+     },
+     "pills": [
+      {
+       "text": "SILIKA = butiran kristal",
+       "word": "silika",
+       "screen": [
+        540,
+        1215
+       ],
+       "size": 42
+      }
+     ],
+     "props": [],
+     "effects": []
+    },
+    {
+     "fromWord": "jendela",
+     "type": "showcase",
+     "withChars": true,
+     "bongo": {
+      "pos": [
+       -1.8,
+       0,
+       -1.45
+      ],
+      "ry": 0.4,
+      "pose": "surprised"
+     },
+     "dodo": {
+      "pos": [
+       1.7,
+       0,
+       -1.45
+      ],
+      "ry": -0.4,
+      "pose": "present"
+     },
+     "center": {
+      "item": "sandpile",
+      "label": "SILIKA"
+     },
+     "items": [
+      {
+       "item": "window",
+       "label": "JENDELA",
+       "word": "jendela"
+      },
+      {
+       "item": "glass",
+       "label": "GELAS",
+       "word": "gelas"
+      },
+      {
+       "item": "phone",
+       "label": "LAYAR HP",
+       "word": "layar"
+      }
+     ],
+     "props": [],
+     "effects": [],
+     "pills": []
+    }
+   ],
+   "props": [],
+   "effects": [],
+   "pills": [],
+   "env": "beach-day"
+  },
+  {
+   "who": "B",
+   "say": "Gampang lah, taruh aja di atas api unggun!",
+   "cap": "Gampang lah, taruh aja di atas *api *unggun!",
+   "env": "beach-dusk",
+   "shot": "side-right",
+   "label": "PERCOBAAN 1",
+   "title": "Api *unggun",
+   "props": [
+    {
+     "type": "campfire"
+    },
+    {
+     "type": "slab",
+     "pile": 0.5,
+     "grow": true
+    }
+   ],
+   "bongo": {
+    "action": "pour",
+    "to": "slab",
+    "item": "bucket",
+    "pourEnd": 2.4,
+    "pose": "idle"
+   },
+   "dodo": {
+    "pose": "think",
+    "pos": [
+     2,
+     0,
+     0.75
+    ],
+    "ry": -0.75
+   },
+   "effects": [],
+   "pills": []
+  },
+  {
+   "who": "B",
+   "say": "Lah, kok nggak meleleh sih?",
+   "cap": "Lah, kok nggak *meleleh sih?",
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "MASALAH: KURANG PANAS",
+   "title": "Nggak *meleleh",
+   "tag": "1 JAM KEMUDIAN",
+   "props": [
+    {
+     "type": "campfire"
+    },
+    {
+     "type": "slab",
+     "pile": 0.5
+    }
+   ],
+   "bongo": {
+    "pose": "shrug",
+    "pos": [
+     -1.2,
+     0,
+     0.6
+    ],
+    "ry": 0.5
+   },
+   "dodo": {
+    "pose": "headshake",
+    "pos": [
+     2,
+     0,
+     0.75
+    ],
+    "ry": -0.6
+   },
+   "effects": [
+    {
+     "type": "question",
+     "on": "bongo"
+    }
+   ],
+   "pills": []
+  },
+  {
+   "who": "D",
+   "say": "Ya iyalah. Pasir baru cair kalau panasnya seribu tujuh ratus derajat. Api unggun cuma tujuh ratusan.",
+   "cap": "Ya iyalah. Pasir baru cair kalau panasnya *1.700 *derajat. Api unggun cuma *700-an.",
+   "env": "beach-dusk",
+   "shot": "low",
+   "label": "MASALAH: KURANG PANAS",
+   "title": "Butuh *1.700°C",
+   "props": [
+    {
+     "type": "campfire",
+     "pos": [
+      -0.35,
+      0,
+      -0.7
+     ],
+     "scale": 0.8
+    },
+    {
+     "type": "thermometer",
+     "pos": [
+      1.15,
+      0,
+      0.1
+     ],
+     "value": 700,
+     "target": 1700,
+     "riseWord": "api",
+     "targetWord": "1.700",
+     "gapWord": "cuma",
+     "targetLabel": "PASIR MELELEH 1.700°C",
+     "valueLabel": "API UNGGUN ±700°C",
+     "gapLabel": "KURANG ±1.000°C!"
+    }
+   ],
+   "bongo": {
+    "pos": [
+     -1.6,
+     0,
+     0.35
+    ],
+    "ry": 0.6,
+    "pose": "lookup"
+   },
+   "dodo": {
+    "pos": [
+     0.1,
+     0,
+     1
+    ],
+    "ry": 0.55,
+    "pose": "point-up"
+   },
+   "effects": [],
+   "pills": []
+  },
+  {
+   "who": "B",
+   "say": "Yaudah, gue tiup aja apinya kenceng-kenceng!",
+   "cap": "Yaudah, gue *tiup aja apinya kenceng-kenceng!",
+   "pad": 1.3,
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "MASALAH: KURANG PANAS",
+   "title": "Tiup *kenceng",
+   "props": [
+    {
+     "type": "campfire"
+    },
+    {
+     "type": "slab",
+     "pile": 0.5
+    }
+   ],
+   "bongo": {
+    "action": "blow",
+    "to": "campfire",
+    "pose": "idle"
+   },
+   "dodo": {
+    "pose": "shield",
+    "pos": [
+     2,
+     0,
+     0.75
+    ],
+    "ry": -0.6
+   },
+   "effects": [],
+   "pills": []
+  },
+  {
+   "who": "D",
+   "say": "Nah, bener! Tapi pake pompa angin, namanya bellows. Terus kayunya ganti arang, biar panasnya nendang.",
+   "cap": "Nah bener! Tapi pake pompa angin, namanya *bellows. Terus kayunya ganti *arang, biar panasnya nendang.",
+   "env": "beach-dusk",
+   "shot": "wide",
+   "label": "SOLUSI",
+   "title": "Pompa *angin",
+   "props": [
+    {
+     "type": "furnace",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ],
+     "appear": true,
+     "heatUp": true
+    },
+    {
+     "type": "bellows",
+     "pos": [
+      -0.45,
+      0,
+      0.3
+     ]
+    }
+   ],
+   "bongo": {
+    "action": "pump",
+    "to": "bellows",
+    "pose": "idle"
+   },
+   "dodo": {
+    "pose": "point",
+    "pos": [
+     1.9,
+     0,
+     0.7
+    ],
+    "ry": -0.6
+   },
+   "pills": [
+    {
+     "text": "BELLOWS = pompa angin",
+     "at": "bellows",
+     "dy": 0,
+     "word": "bellows",
+     "color": "white",
+     "size": 30
+    },
+    {
+     "text": "TUNGKU ARANG",
+     "at": "furnace",
+     "dy": 0.75,
+     "word": "arang"
+    }
+   ],
+   "effects": []
+  },
+  {
+   "who": "B",
+   "say": "Udah panas banget nih, tapi pasirnya masih bandel!",
+   "cap": "Udah panas banget nih, tapi pasirnya masih *bandel!",
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "MASALAH: MASIH BANDEL",
+   "title": "Masih *bandel",
+   "props": [
+    {
+     "type": "furnace",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ]
+    },
+    {
+     "type": "crucible",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ],
+     "state": "sand"
+    },
+    {
+     "type": "bellows",
+     "pos": [
+      -0.45,
+      0,
+      0.3
+     ]
+    }
+   ],
+   "bongo": {
+    "pose": "wipe",
+    "pos": [
+     -1.45,
+     0,
+     0.45
+    ],
+    "ry": 0.5
+   },
+   "dodo": {
+    "pos": [
+     1.9,
+     0,
+     0.7
+    ],
+    "ry": -0.6,
+    "pose": "idle"
+   },
+   "effects": [
+    {
+     "type": "sweat",
+     "on": "bongo"
+    }
+   ],
+   "pills": [
+    {
+     "text": "BELUM MELELEH",
+     "at": "crucible",
+     "color": "red",
+     "delay": 0.6
+    }
+   ]
+  },
+  {
+   "who": "D",
+   "say": "Tenang, ada triknya. Campurin soda abu, bubuk putih yang bikin pasir gampang meleleh, cukup seribu derajat. Orang Mesir kuno udah pake trik ini dari ribuan tahun lalu.",
+   "cap": "Tenang, ada triknya. Campurin *soda *abu, bubuk putih yang bikin pasir gampang meleleh, cukup *seribu *derajat. Orang *Mesir *kuno udah pake trik ini dari ribuan tahun lalu.",
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "BAHAN RAHASIA",
+   "title": "Campur *soda *abu",
+   "props": [
+    {
+     "type": "pyramids",
+     "word": "mesir"
+    },
+    {
+     "type": "furnace",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ]
+    },
+    {
+     "type": "crucible",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ],
+     "state": "sand",
+     "changeTo": "molten",
+     "word": "meleleh"
+    }
+   ],
+   "dodo": {
+    "action": "pour",
+    "to": "crucible",
+    "item": "bag",
+    "label": "SODA ABU = bubuk putih",
+    "color": "#FFFFFF",
+    "pourEnd": 2.4,
+    "pose": "idle"
+   },
+   "bongo": {
+    "pose": "surprised",
+    "pos": [
+     -1.5,
+     0,
+     0.4
+    ],
+    "ry": 0.5
+   },
+   "effects": [
+    {
+     "type": "glow",
+     "on": "crucible"
+    }
+   ],
+   "pills": [
+    {
+     "text": "±1.000°C",
+     "at": "crucible",
+     "word": "meleleh",
+     "color": "orange",
+     "size": 34
+    },
+    {
+     "text": "MESIR KUNO",
+     "at": "pyramids",
+     "dy": 0,
+     "word": "mesir",
+     "size": 34
+    }
+   ]
+  },
+  {
+   "who": "B",
+   "say": "Cair! Eh, tapi kok pas kena air malah larut?",
+   "cap": "Cair! Eh, tapi kok pas kena air malah *larut?",
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "MASALAH: LARUT AIR",
+   "title": "Kok *larut?",
+   "props": [
+    {
+     "type": "furnace",
+     "pos": [
+      0.95,
+      0,
+      -0.9
+     ]
+    },
+    {
+     "type": "crucible",
+     "pos": [
+      0.95,
+      0,
+      -0.9
+     ],
+     "state": "molten"
+    },
+    {
+     "type": "bucket",
+     "pos": [
+      -0.1,
+      0,
+      0.75
+     ]
+    }
+   ],
+   "bongo": {
+    "action": "dip",
+    "to": "bucket",
+    "pos": [
+     -1.25,
+     0,
+     0.55
+    ],
+    "turn": -0.45,
+    "pose": "idle"
+   },
+   "dodo": {
+    "pose": "facepalm",
+    "pos": [
+     1.9,
+     0,
+     0.7
+    ],
+    "ry": -0.6
+   },
+   "effects": [
+    {
+     "type": "dip",
+     "on": "bucket",
+     "word": "kena",
+     "dissolveWord": "larut"
+    }
+   ],
+   "pills": [
+    {
+     "text": "LARUT!",
+     "at": "bucket",
+     "dy": 0.75,
+     "word": "larut",
+     "color": "red",
+     "size": 36
+    }
+   ]
+  },
+  {
+   "who": "D",
+   "say": "Itu karena kurang kapur. Kapur bikin kacanya kuat, dan nggak ancur kena air.",
+   "cap": "Itu karena kurang *kapur. Kapur bikin kacanya kuat dan nggak ancur kena air.",
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "SOLUSI",
+   "title": "Tambah *kapur",
+   "props": [
+    {
+     "type": "furnace",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ]
+    },
+    {
+     "type": "crucible",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ],
+     "state": "molten"
+    }
+   ],
+   "dodo": {
+    "action": "pour",
+    "to": "crucible",
+    "item": "bag",
+    "itemColor": "#C9C2B4",
+    "label": "KAPUR",
+    "color": "#F7F7F2",
+    "chunky": true,
+    "pourEnd": 1.9,
+    "pose": "idle"
+   },
+   "bongo": {
+    "pose": "nod",
+    "pos": [
+     -1.5,
+     0,
+     0.4
+    ],
+    "ry": 0.5
+   },
+   "effects": [
+    {
+     "type": "glow",
+     "on": "crucible"
+    }
+   ],
+   "pills": [
+    {
+     "text": "KUAT & TAHAN AIR ✓",
+     "at": "crucible",
+     "dy": 0.5,
+     "word": "kuat",
+     "color": "green"
+    }
+   ]
+  },
+  {
+   "who": "B",
+   "say": "Terus ini kok banyak gelembungnya?",
+   "cap": "Terus ini kok banyak *gelembungnya?",
+   "env": "beach-dusk",
+   "shot": "close-center",
+   "label": "MASALAH: GELEMBUNG",
+   "title": "Penuh *gelembung",
+   "props": [
+    {
+     "type": "furnace",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ]
+    },
+    {
+     "type": "crucible",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ],
+     "state": "molten"
+    }
+   ],
+   "bongo": {
+    "pos": [
+     -1.15,
+     0,
+     -0.1
+    ],
+    "ry": 0.9,
+    "pose": "surprised"
+   },
+   "dodo": {
+    "hide": true
+   },
+   "effects": [
+    {
+     "type": "bubbles",
+     "on": "crucible",
+     "count": 28
+    }
+   ],
+   "pills": []
+  },
+  {
+   "who": "D",
+   "say": "Diemin aja di api lebih lama, nanti gelembungnya naik terus ilang sendiri.",
+   "cap": "Diemin aja di api *lebih *lama, nanti gelembungnya naik terus ilang sendiri.",
+   "env": "beach-dusk",
+   "shot": "close-center",
+   "zoom": 1.45,
+   "label": "SOLUSI",
+   "title": "Diemin *lebih *lama",
+   "tag": "BEBERAPA JAM KEMUDIAN",
+   "props": [
+    {
+     "type": "furnace",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ]
+    },
+    {
+     "type": "crucible",
+     "pos": [
+      0.6,
+      0,
+      -0.1
+     ],
+     "state": "molten",
+     "changeTo": "clear",
+     "word": "naik"
+    }
+   ],
+   "dodo": {
+    "pos": [
+     1.6,
+     0,
+     0.55
+    ],
+    "ry": -0.75,
+    "pose": "point"
+   },
+   "bongo": {
+    "hide": true
+   },
+   "effects": [
+    {
+     "type": "bubbles",
+     "on": "crucible",
+     "count": 26,
+     "fade": true
+    }
+   ],
+   "pills": []
+  },
+  {
+   "who": "B",
+   "say": "Sekarang giliran gue! Gue tiup pake pipa besi!",
+   "cap": "Sekarang giliran gue! Gue *tiup pake pipa besi!",
+   "pad": 1.3,
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "MEMBENTUK",
+   "title": "Tiup *kaca",
+   "props": [
+    {
+     "type": "furnace",
+     "pos": [
+      1.2,
+      0,
+      -1
+     ]
+    },
+    {
+     "type": "crucible",
+     "pos": [
+      1.2,
+      0,
+      -1
+     ],
+     "state": "clear"
+    }
+   ],
+   "bongo": {
+    "action": "blowpipe",
+    "to": "right",
+    "pos": [
+     -1.35,
+     0,
+     0.45
+    ],
+    "pose": "idle"
+   },
+   "dodo": {
+    "pose": "cheer",
+    "pos": [
+     2,
+     0,
+     0.75
+    ],
+    "ry": -0.6
+   },
+   "effects": [],
+   "pills": []
+  },
+  {
+   "who": "B",
+   "say": "Yaaah, kok retak sendiri sih!",
+   "cap": "Yaaah, kok *retak sendiri sih!",
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "MASALAH: RETAK",
+   "title": "Kok *retak?",
+   "props": [
+    {
+     "type": "table",
+     "pos": [
+      0.35,
+      0,
+      0.35
+     ]
+    },
+    {
+     "type": "vase",
+     "on": "table",
+     "color": "#A8E6D2"
+    }
+   ],
+   "bongo": {
+    "pose": "handsonhead",
+    "pos": [
+     -1.2,
+     0,
+     0.5
+    ],
+    "ry": 0.6
+   },
+   "dodo": {
+    "pose": "surprised",
+    "pos": [
+     1.85,
+     0,
+     0.7
+    ],
+    "ry": -0.6
+   },
+   "effects": [
+    {
+     "type": "cracks",
+     "on": "vase"
+    }
+   ],
+   "pills": []
+  },
+  {
+   "who": "D",
+   "say": "Itu karena dinginnya kecepetan. Kaca harus didinginin pelan-pelan, berjam-jam, di oven khusus. Istilah kerennya, annealing.",
+   "cap": "Itu karena dinginnya kecepetan. Kaca harus didinginin *pelan-pelan, berjam-jam, di oven khusus. Istilah kerennya *annealing.",
+   "env": "beach-dusk",
+   "shot": "medium",
+   "label": "SOLUSI",
+   "title": "Dinginin *pelan-pelan",
+   "props": [
+    {
+     "type": "oven",
+     "pos": [
+      0.4,
+      0,
+      -0.15
+     ],
+     "cool": true,
+     "tempFrom": 500,
+     "tempTo": 30
+    }
+   ],
+   "dodo": {
+    "pose": "point",
+    "pos": [
+     1.75,
+     0,
+     0.75
+    ],
+    "ry": -0.6
+   },
+   "bongo": {
+    "pose": "yawn",
+    "pos": [
+     -1.45,
+     0,
+     0.5
+    ],
+    "ry": 0.5
+   },
+   "effects": [
+    {
+     "type": "temp",
+     "on": "oven"
+    }
+   ],
+   "pills": [
+    {
+     "text": "BERJAM-JAM",
+     "clock": true,
+     "at": [
+      -0.6,
+      2.3,
+      -0.15
+     ],
+     "dy": 0,
+     "word": "berjam-jam"
+    },
+    {
+     "text": "ANNEALING = dingin pelan",
+     "at": [
+      0.4,
+      0.25,
+      0.6
+     ],
+     "dy": 0,
+     "word": "annealing",
+     "size": 36
+    }
+   ]
+  },
+  {
+   "who": "BD",
+   "say": "Akhirnya, jadi kaca!",
+   "cap": "Akhirnya, jadi *kaca!",
+   "env": "beach-day",
+   "shot": "wide",
+   "label": "HASILNYA",
+   "title": "Ini namanya *kaca",
+   "props": [
+    {
+     "type": "pedestal",
+     "pos": [
+      0.25,
+      0,
+      0.3
+     ]
+    },
+    {
+     "type": "vase",
+     "on": "pedestal",
+     "scale": 1.15,
+     "color": "#9FE3C9"
+    }
+   ],
+   "bongo": {
+    "pose": "cheer",
+    "pos": [
+     -1.15,
+     0,
+     0.45
+    ]
+   },
+   "dodo": {
+    "pose": "cheer",
+    "pos": [
+     1.65,
+     0,
+     0.6
+    ]
+   },
+   "effects": [
+    {
+     "type": "sparkles",
+     "on": "vase"
+    }
+   ],
+   "pills": []
+  },
+  {
+   "who": "B",
+   "say": "Tapi Do, kok warnanya ijo?",
+   "cap": "Tapi Do, kok warnanya *ijo?",
+   "env": "beach-day",
+   "shot": "medium",
+   "zoom": 0.55,
+   "label": "SIAP-SIAP",
+   "title": "Kok *ijo?",
+   "props": [
+    {
+     "type": "pedestal",
+     "pos": [
+      0.25,
+      0,
+      0.3
+     ]
+    },
+    {
+     "type": "vase",
+     "on": "pedestal",
+     "scale": 1.15,
+     "color": "#7FD6A8",
+     "alpha": 0.88
+    }
+   ],
+   "bongo": {
+    "pose": "point",
+    "pos": [
+     -1.1,
+     0,
+     0.5
+    ],
+    "ry": 0.6
+   },
+   "dodo": {
+    "hide": true
+   },
+   "pills": [
+    {
+     "text": "IJO?",
+     "at": "vase",
+     "dy": 0.85,
+     "word": "ijo",
+     "color": "green",
+     "size": 40
+    }
+   ],
+   "effects": []
+  },
+  {
+   "who": "D",
+   "say": "Hmm, jawabannya di part dua. Follow biar nggak ketinggalan!",
+   "cap": "Hmm, jawabannya di *part *dua. Follow biar nggak ketinggalan!",
+   "pad": 2,
+   "env": "beach-day",
+   "shot": "close-right",
+   "label": "SIAP-SIAP",
+   "title": "Lanjut *part *2",
+   "props": [
+    {
+     "type": "pedestal",
+     "pos": [
+      0.25,
+      0,
+      0.3
+     ]
+    },
+    {
+     "type": "vase",
+     "on": "pedestal",
+     "scale": 1.15,
+     "color": "#7FD6A8",
+     "alpha": 0.88
+    }
+   ],
+   "dodo": {
+    "pose": "think",
+    "pos": [
+     1.65,
+     0,
+     0.6
+    ],
+    "ry": -0.5
+   },
+   "bongo": {
+    "hide": true
+   },
+   "endcard": {
+    "title": "PART 2",
+    "text": "Kenapa kacanya *ijo?"
+   },
+   "effects": [],
+   "pills": []
+  }
+ ]
+}

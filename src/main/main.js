@@ -1,74 +1,121 @@
 /**
  * src/main/main.js (Clean Modular Architecture)
- * Versi Stabil Lengkap + Penambahan Pipeline Otomatis Google Flow -> CapCut Web (JJ)
- * + Dukungan Penuh Konsep Daster & Homewear Try-On (Tanpa CapCut)
- * + Sinkronisasi Profil & Sesi Akun TikTok Otomatis
+ * Versi Stabil Lengkap + Penanganan Isolasi Sesi Runtime Pengguna
+ * + Auto-Updater Terintegrasi (Mode Game Popup Dialog & Handshake UI)
+ * + Auto-Routing Multi-Akun Showcase TikTok (Tanpa Cek Manual & Multi-Session Terisolasi)
  */
-const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, safeStorage } = require('electron');
+const { autoUpdater } = require('electron-updater');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const https = require('https');
+const { machineIdSync } = require('node-machine-id');
+
+// Path data runtime aman (menghindari ENOTDIR di dalam app.asar)
+const isPackaged = app.isPackaged;
+const DATA_ROOT = isPackaged 
+  ? app.getPath('userData') 
+  : path.resolve(__dirname, '../../');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../');
-const TIKTOK_PROFILES_DIR = path.resolve(PROJECT_ROOT, 'sessions/tiktok_profiles');
-const ACCOUNTS_FILE = path.resolve(PROJECT_ROOT, 'sessions/accounts.json');
+// Versi terinstal: semua modul yang memakai process.cwd() menulis ke userData (bukan folder instalasi yang terhapus saat update)
+if (isPackaged) {
+  fs.mkdirSync(DATA_ROOT, { recursive: true });
+  process.chdir(DATA_ROOT);
+}
+const SESSIONS_DIR = path.resolve(DATA_ROOT, 'sessions');
 
-if (!fs.existsSync(TIKTOK_PROFILES_DIR)) {
-  fs.mkdirSync(TIKTOK_PROFILES_DIR, { recursive: true });
+// Server update di belakang Cloudflare menawarkan HTTP/3: unduhan besar lewat QUIC sering putus
+// (net::ERR_QUIC_PROTOCOL_ERROR). Paksa HTTP/2 biasa.
+app.commandLine.appendSwitch('disable-quic');
+
+// Error jaringan yang lolos dari updater jangan sampai memunculkan dialog crash main process
+process.on('uncaughtException', (err) => {
+  const msg = err?.message || String(err);
+  if (/^net::ERR_/.test(msg)) {
+    console.warn('[Main] Error jaringan diabaikan:', msg);
+    if (typeof mainWindow !== 'undefined' && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:error', 'Koneksi terputus saat mengunduh pembaruan. Silakan coba lagi.');
+    }
+    return;
+  }
+  console.error('[Main] Uncaught exception:', err);
+  // Perilaku bawaan Electron untuk error lain tetap: tampilkan dialog
+  try { require('electron').dialog.showErrorBox('A JavaScript error occurred in the main process', err?.stack || msg); } catch (e) {}
+});
+const perfProfile = require('../core/perfProfile');
+const remoteUpload = require('../core/remoteUploadClient');
+const STORAGE_DIR = path.resolve(DATA_ROOT, 'storage');
+const TIKTOK_PROFILES_DIR = path.resolve(DATA_ROOT, 'sessions/tiktok_profiles');
+const ACCOUNTS_FILE = path.resolve(DATA_ROOT, 'sessions/accounts.json');
+
+// Pastikan direktori sesi & storage dasar selalu tersedia
+[SESSIONS_DIR, STORAGE_DIR, TIKTOK_PROFILES_DIR].forEach((d) => {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+});
+
+// Inisialisasi & Sanitasi file akun baru
+function sanitizeAccountsOnStart() {
+  try {
+    let shouldReset = false;
+    if (!fs.existsSync(ACCOUNTS_FILE)) {
+      shouldReset = true;
+    } else {
+      const content = fs.readFileSync(ACCOUNTS_FILE, 'utf-8');
+      if (content.includes('1793125582110') || content.includes('Sherlylovyou')) {
+        console.warn('[Sanitize] Terdeteksi sisa data akun pengembang, mereset file sesi...');
+        shouldReset = true;
+      }
+    }
+
+    if (shouldReset) {
+      fs.writeFileSync(
+        ACCOUNTS_FILE,
+        JSON.stringify({ accounts: [], activeAccountId: null }, null, 2),
+        'utf-8'
+      );
+    }
+  } catch (e) {
+    console.warn('[Sanitize] Error saat memeriksa akun awal:', e.message);
+  }
+}
+sanitizeAccountsOnStart();
+
+// Helper untuk membaca username aktif TikTok dari accounts.json
+function getActiveTikTokUsername() {
+  try {
+    if (fs.existsSync(ACCOUNTS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf-8'));
+      const list = Array.isArray(raw) ? raw : (raw.accounts || []);
+      const activeId = raw.activeAccountId || raw.activeId;
+      const activeAcc = list.find((a) => a.id === activeId) || (list.length > 0 ? list[0] : null);
+      if (activeAcc) {
+        return (activeAcc.username || activeAcc.name || activeAcc.id || 'default').replace(/^@/, '').trim();
+      }
+    }
+  } catch (e) {}
+  return 'default';
 }
 
-// Import Platform & Layanan Sesi
-const sessionManager = require('../platforms/instagram/sessionManager');
-const scheduleRunner = require('../core/scheduleRunner');
-const trayManager = require('../core/trayManager');
-const pinterestSession = require('../platforms/pinterest/pinterestSession');
-const tiktokSessionManager = require('../platforms/tiktok/tiktokSessionManager');
-const { uploadToTikTok } = require('../platforms/tiktok/tiktokUploader');
+function cleanUserIdentifier(name) {
+  if (!name) return 'default';
+  return String(name).trim().replace(/^@/, '').replace(/[^a-zA-Z0-9._-]/g, '_').toLowerCase();
+}
 
-// Import Layanan AI & Penyimpanan Galeri Lengkap
-const aiCaption = require('../services/aiCaption');
-const { generateAndStoreAiImage } = require('../services/aiImage');
-const { getGeneratedImagesList, openImagesFolder, deleteGeneratedImage } = require('../services/imageStorage');
-const { 
-  runStoryboardPipeline: runInstagramStoryboardPipeline,
-  getSavedVideosList,
-  openVideoFolder,
-  openStoryboardFolder,
-  openBahanVideoFolder,
-  deleteSavedVideo,
-  deleteSavedStoryboard
-} = require('../services/aiVideo');
-
-// Import Pipeline TikTok: JJ & Daster Terpisah
-const { runTikTokVideoPipeline } = require('../services/aiVideoTiktok');
-const { runTikTokDasterPipeline } = require('../services/aiVideoTiktokDaster');
-
-// Import Runner Otomasi Google Flow & CapCut Web
-const flowRunner = require(path.join(__dirname, '../services/flowVideoRunner'));
-const flowRunnerTiktok = require('../services/flowVideoRunnerTiktok');
-const flowRunnerTiktokDaster = require('../services/flowVideoRunnerTiktokDaster');
-
-const runFlowProjectCreationTiktok = flowRunnerTiktok.runFlowProjectCreationTiktok || flowRunnerTiktok;
-const runFlowProjectCreationTiktokDaster = flowRunnerTiktokDaster.runFlowProjectCreationTiktokDaster || flowRunnerTiktokDaster;
-const { runCapCutTemplatePipeline, openCapCutLoginSession } = require('../services/capcutWebRunner');
-
-// Import Sub-Modul IPC
-const registerWindowIpc = require('./ipc/windowIpc');
-const registerAccountIpc = require('./ipc/accountIpc');
-const registerShowcaseIpc = require('./ipc/showcaseIpc');
-const registerVideoIpc = require('./ipc/videoIpc');
-const registerScheduleIpc = require('./ipc/scheduleIpc');
-const registerAiConfigIpc = require('./ipc/aiConfigIpc');
-
-let mainWindow;
-let isQuitting = false;
-
-// Helper registrasi IPC aman tanpa konflik duplikasi
-function safeHandle(channel, handler) {
-  try {
-    ipcMain.removeHandler(channel);
-  } catch (e) {}
-  ipcMain.handle(channel, handler);
+// Isolasi mutlak direktori profil browser per akun TikTok
+function getTikTokProfileDir(accountId) {
+  let targetId = accountId;
+  if (!targetId || targetId === 'default') {
+    targetId = getActiveTikTokUsername();
+  }
+  const cleanId = cleanUserIdentifier(targetId);
+  const targetDir = path.resolve(TIKTOK_PROFILES_DIR, `profile_${cleanId}`);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+  return targetDir;
 }
 
 function getOriginalChromeExecutablePath() {
@@ -96,19 +143,310 @@ function getOriginalChromeExecutablePath() {
   return c.find((x) => x && fs.existsSync(x));
 }
 
-function cleanUserIdentifier(name) {
-  if (!name) return 'etnic';
-  return String(name).trim().replace(/^@/, '').replace(/[^a-zA-Z0-9._-]/g, '_').toLowerCase();
+// ==========================================
+// FUNGSI VERIFIKASI LISENSI SERVER (HWID)
+// ==========================================
+let currentActiveLicenseKey = null;
+let heartbeatTimer = null;
+let isAppExiting = false;
+
+function getHardwareId() {
+  try {
+    return machineIdSync();
+  } catch (e) {
+    return 'HWID-FALLBACK-' + os.hostname();
+  }
 }
 
-function getTikTokProfileDir(accountId = 'karuna_id') {
-  if (typeof tiktokSessionManager.getTikTokProfileDir === 'function') {
-    return tiktokSessionManager.getTikTokProfileDir(accountId);
+function verifyLicenseWithServer(licenseKey, hwid) {
+  return new Promise((resolve) => {
+    const postData = JSON.stringify({
+      license_key: licenseKey,
+      machine_id: hwid
+    });
+
+    const req = https.request('https://license.etnicstore.com/verify.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      },
+      timeout: 8000
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(body));
+        } catch (e) {
+          resolve({ valid: false, networkError: true, message: 'Format balasan server lisensi tidak valid.' });
+        }
+      });
+    });
+
+    req.on('error', () => {
+      resolve({ valid: false, networkError: true, message: 'Gagal terhubung ke server lisensi. Periksa koneksi internet.' });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ valid: false, networkError: true, message: 'Koneksi ke server lisensi timeout.' });
+    });
+
+    req.write(postData);
+    req.end();
+  });
+}
+
+// ==========================================
+// LISENSI TERSIMPAN (TERKUNCI DI PERANGKAT INI)
+// Disimpan terenkripsi (safeStorage Windows) agar tidak perlu copy-paste setiap membuka aplikasi
+// ==========================================
+const LICENSE_FILE = path.join(SESSIONS_DIR, 'license.json');
+
+function saveLicenseKey(licenseKey) {
+  try {
+    const data = safeStorage.isEncryptionAvailable()
+      ? { encrypted: safeStorage.encryptString(licenseKey).toString('base64') }
+      : { plain: licenseKey };
+    fs.writeFileSync(LICENSE_FILE, JSON.stringify({ ...data, savedAt: new Date().toISOString() }), 'utf-8');
+  } catch (e) {}
+}
+
+function loadSavedLicenseKey() {
+  try {
+    if (!fs.existsSync(LICENSE_FILE)) return '';
+    const data = JSON.parse(fs.readFileSync(LICENSE_FILE, 'utf-8'));
+    if (data.encrypted) return safeStorage.decryptString(Buffer.from(data.encrypted, 'base64'));
+    return data.plain || '';
+  } catch (e) {
+    return '';
   }
-  const cleanId = cleanUserIdentifier(accountId);
-  const targetDir = path.resolve(TIKTOK_PROFILES_DIR, `acc_${cleanId}`);
-  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-  return targetDir;
+}
+
+function clearSavedLicenseKey() {
+  try { if (fs.existsSync(LICENSE_FILE)) fs.unlinkSync(LICENSE_FILE); } catch (e) {}
+}
+
+// ==========================================
+// TELEMETRI & HEARTBEAT REALTIME MONITORING
+// ==========================================
+function startLicenseHeartbeat(licenseKey) {
+  currentActiveLicenseKey = licenseKey;
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+  const sendHeartbeat = () => {
+    if (!currentActiveLicenseKey) return;
+
+    const payload = JSON.stringify({
+      license_key: currentActiveLicenseKey,
+      machine_id: getHardwareId(),
+      pc_name: os.hostname(),
+      app_version: app.getVersion() || '1.0.0'
+    });
+
+    const req = https.request('https://license.etnicstore.com/ping.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      },
+      timeout: 5000
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const resp = JSON.parse(data);
+          if (resp && resp.license_status === 'suspended' && mainWindow && !mainWindow.isDestroyed()) {
+            currentActiveLicenseKey = null;
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            mainWindow.loadFile(path.join(__dirname, '../renderer/license.html'));
+          }
+        } catch (e) {}
+      });
+    });
+
+    req.on('error', () => {});
+    req.write(payload);
+    req.end();
+  };
+
+  sendHeartbeat();
+  heartbeatTimer = setInterval(sendHeartbeat, 3 * 60 * 1000);
+}
+
+function sendOfflinePingAsync() {
+  return new Promise((resolve) => {
+    if (!currentActiveLicenseKey) return resolve();
+
+    const payload = JSON.stringify({
+      license_key: currentActiveLicenseKey,
+      machine_id: getHardwareId(),
+      action: 'offline'
+    });
+
+    const req = https.request('https://license.etnicstore.com/ping.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      },
+      timeout: 1500
+    }, () => {
+      resolve();
+    });
+
+    req.on('error', () => resolve());
+    req.on('timeout', () => {
+      req.destroy();
+      resolve();
+    });
+
+    req.write(payload);
+    req.end();
+  });
+}
+
+// ==========================================
+// PENGATURAN PEMBARUAN OTOMATIS (MODE GAME POPUP)
+// ==========================================
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.logger = console;
+
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[AutoUpdater] Memeriksa versi pembaruan di server...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('[AutoUpdater] Update tersedia:', info.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:available', {
+        version: info.version,
+        releaseNotes: info.releaseNotes || 'Pembaruan sistem dan fitur terbaru.'
+      });
+    }
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[AutoUpdater] Aplikasi sudah dalam versi terbaru.');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:not-available');
+    }
+  });
+
+  autoUpdater.on('download-progress', (progressObj) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:download-progress', {
+        percent: Math.round(progressObj.percent)
+      });
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('[AutoUpdater] Unduhan selesai:', info.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:downloaded', {
+        version: info.version
+      });
+    }
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.warn('[AutoUpdater] Error pemeriksaan pembaruan:', err ? err.message : '');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:error', err ? err.message : 'Gagal memeriksa pembaruan.');
+    }
+  });
+}
+
+// Import Platform & Layanan Sesi
+const sessionManager = require('../platforms/instagram/sessionManager');
+const scheduleRunner = require('../core/scheduleRunner');
+const trayManager = require('../core/trayManager');
+const pinterestSession = require('../platforms/pinterest/pinterestSession');
+const tiktokSessionManager = require('../platforms/tiktok/tiktokSessionManager');
+const { uploadToTikTok } = require('../platforms/tiktok/tiktokUploader');
+
+// Galeri per akun: hasil video / gambar ditandai dengan akun yang aktif saat proses DIMULAI
+// (pindah akun di tengah proses tidak memindahkan hasilnya ke akun lain)
+const galleryOwner = require('../core/galleryOwner');
+galleryOwner.initGalleryOwner({ dataRoot: DATA_ROOT, getActiveAccount: () => sessionManager.getActiveAccount() });
+const GALLERY_PRODUCER_CHANNELS = new Set([
+  'generate-ai-video', 'generate-ai-image', 'remotion-render',
+  'run-capcut-template', 'run-combined-flow-capcut', 'run-flow-to-jj-from-storyboard'
+]);
+const originalIpcHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, handler) => {
+  if (!GALLERY_PRODUCER_CHANNELS.has(channel)) return originalIpcHandle(channel, handler);
+  return originalIpcHandle(channel, async (...args) => {
+    const owner = galleryOwner.currentOwner();
+    const result = await handler(...args);
+    try {
+      if (result?.success) galleryOwner.tagFiles(galleryOwner.filesFromResult(result), owner);
+    } catch (e) {}
+    return result;
+  });
+};
+
+if (typeof tiktokSessionManager.setBaseDirs === 'function') {
+  tiktokSessionManager.setBaseDirs({
+    dataRoot: DATA_ROOT,
+    sessionsDir: SESSIONS_DIR,
+    profilesDir: TIKTOK_PROFILES_DIR,
+    accountsFile: ACCOUNTS_FILE
+  });
+}
+
+// Import Layanan AI & Penyimpanan Galeri Lengkap
+const aiCaption = require('../services/aiCaption');
+const { generateAndStoreAiImage } = require('../services/aiImage');
+const { getGeneratedImagesList, openImagesFolder, deleteGeneratedImage } = require('../services/imageStorage');
+const { 
+  runStoryboardPipeline: runInstagramStoryboardPipeline,
+  getSavedVideosList,
+  openVideoFolder,
+  openStoryboardFolder,
+  openBahanVideoFolder,
+  deleteSavedVideo,
+  deleteSavedStoryboard
+} = require('../services/aiVideo');
+
+// Import Pipeline TikTok: JJ & Daster Terpisah
+const { runTikTokVideoPipeline } = require('../services/aiVideoTiktok');
+const { runTikTokDasterPipeline } = require('../services/aiVideoTiktokDaster');
+const { runTikTokSensasiPipeline } = require('../services/aiVideoTiktokSensasi');
+const { runTikTokPovPipeline } = require('../services/aiVideoTiktokPov');
+
+// Import Runner Otomasi Google Flow & CapCut Web
+const flowRunner = require(path.join(__dirname, '../services/flowVideoRunner'));
+const flowRunnerTiktok = require('../services/flowVideoRunnerTiktok');
+const flowRunnerTiktokDaster = require('../services/flowVideoRunnerTiktokDaster');
+
+const runFlowProjectCreationTiktok = flowRunnerTiktok.runFlowProjectCreationTiktok || flowRunnerTiktok;
+const runFlowProjectCreationTiktokDaster = flowRunnerTiktokDaster.runFlowProjectCreationTiktokDaster || flowRunnerTiktokDaster;
+const { runCapCutTemplatePipeline, openCapCutLoginSession } = require('../services/capcutWebRunner');
+
+// Import Sub-Modul IPC
+const registerWindowIpc = require('./ipc/windowIpc');
+const registerAccountIpc = require('./ipc/accountIpc');
+const registerShowcaseIpc = require('./ipc/showcaseIpc');
+const registerVideoIpc = require('./ipc/videoIpc');
+const registerScheduleIpc = require('./ipc/scheduleIpc');
+const registerAiConfigIpc = require('./ipc/aiConfigIpc');
+const registerRemotionIpc = require('./ipc/remotionIpc');
+const registerEdu3DIpc = require('./ipc/edu3dIpc');
+const registerKartun3DIpc = require('./ipc/kartun3dIpc');
+
+let mainWindow;
+
+function safeHandle(channel, handler) {
+  try {
+    ipcMain.removeHandler(channel);
+  } catch (e) {}
+  ipcMain.handle(channel, handler);
 }
 
 function focusMainWindow() {
@@ -120,7 +458,8 @@ function focusMainWindow() {
 }
 
 function loadInitialScreen() {
-  if (mainWindow) mainWindow.loadFile(path.join(__dirname, '../renderer/select-account.html'));
+  if (!mainWindow) return;
+  mainWindow.loadFile(path.join(__dirname, '../renderer/license.html'));
 }
 
 function setupPartitionHeaders(partitionName) {
@@ -140,13 +479,15 @@ function createMainWindow() {
     path.join(__dirname, '../renderer/preload.js')
   ];
   const preloadPath = preloadCandidates.find((p) => fs.existsSync(p)) || path.join(__dirname, 'preload.js');
+  const appIconPath = path.join(__dirname, '../renderer/assets/icon.ico');
 
   mainWindow = new BrowserWindow({
     width: 1140,
     height: 860,
     minWidth: 980,
     minHeight: 720,
-    title: '',
+    title: 'Bot Auto Upload',
+    icon: fs.existsSync(appIconPath) ? appIconPath : undefined,
     frame: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: false,
@@ -182,9 +523,9 @@ function createMainWindow() {
         const raw = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf-8'));
         const accList = Array.isArray(raw) ? raw : (raw.accounts || []);
         const activeId = raw.activeAccountId || raw.activeId;
-        const activeAcc = accList.find((a) => a.id === activeId) || accList[0];
+        const activeAcc = accList.find((a) => a.id === activeId) || (accList.length > 0 ? accList[0] : null);
 
-        if (activeAcc && String(activeAcc.platform).toLowerCase() === 'tiktok') {
+        if (activeAcc && activeAcc.id && !String(activeAcc.id).includes('1793125582110') && String(activeAcc.platform).toLowerCase() === 'tiktok') {
           const syncRes = await tiktokSessionManager.syncTikTokProfile(activeAcc.id || activeAcc.username);
           if (syncRes && syncRes.success && syncRes.account && mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('account-updated', syncRes.account);
@@ -197,9 +538,15 @@ function createMainWindow() {
     }
   });
 
-  mainWindow.on('close', () => {
-    isQuitting = true;
-    app.quit();
+  mainWindow.on('close', async (event) => {
+    if (!isAppExiting) {
+      event.preventDefault();
+      isAppExiting = true;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      await sendOfflinePingAsync();
+      clearKalodataStorageOnExit();
+      app.exit(0);
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -207,13 +554,14 @@ function createMainWindow() {
   });
 
   loadInitialScreen();
+  setupAutoUpdater();
 }
 
 function clearKalodataStorageOnExit() {
   try {
     const filesToReset = [
-      path.resolve(PROJECT_ROOT, 'sessions/kalodata_products.json'),
-      path.resolve(PROJECT_ROOT, 'sessions/searchList.json')
+      path.resolve(DATA_ROOT, 'sessions/kalodata_products.json'),
+      path.resolve(DATA_ROOT, 'sessions/searchList.json')
     ];
 
     filesToReset.forEach((filePath) => {
@@ -227,9 +575,16 @@ function clearKalodataStorageOnExit() {
 app.whenReady().then(() => {
   if (process.platform === 'win32') app.setAppUserModelId('AutoUpload Core');
 
-  // 1. Siapkan Konteks Lengkap untuk Sub-Modul IPC
+  remoteUpload.initRemoteUpload(SESSIONS_DIR);
+
   const ctx = {
-    PROJECT_ROOT,
+    // Identitas lisensi untuk Worker Upload 24 jam (server)
+    getLicenseAuth: () => ({ licenseKey: currentActiveLicenseKey || loadSavedLicenseKey(), machineId: getHardwareId() }),
+    PROJECT_ROOT: DATA_ROOT,
+    DATA_ROOT,
+    ACCOUNTS_FILE,
+    SESSIONS_DIR,
+    STORAGE_DIR,
     TIKTOK_PROFILES_DIR,
     getMainWindow: () => mainWindow,
     focusMainWindow,
@@ -245,14 +600,21 @@ app.whenReady().then(() => {
     ...tiktokSessionManager,
     ...aiCaption,
     uploadToTikTok,
-    // Eksekusi Pipeline Otomatis sesuai Konsep
     runTikTokVideoPipeline: async (params) => {
       if (params && params.concept === 'daster') {
         return await runTikTokDasterPipeline(params);
       }
+      if (params && params.concept === 'sensasi') {
+        return await runTikTokSensasiPipeline(params);
+      }
+      if (params && params.concept === 'pov') {
+        return await runTikTokPovPipeline(params);
+      }
       return await runTikTokVideoPipeline(params);
     },
     runTikTokDasterPipeline,
+    runTikTokSensasiPipeline,
+    runTikTokPovPipeline,
     runInstagramStoryboardPipeline,
     runCapCutTemplatePipeline,
     openCapCutLoginSession,
@@ -275,15 +637,210 @@ app.whenReady().then(() => {
       : (flowRunnerTiktokDaster.default || flowRunnerTiktokDaster)
   };
 
-  // 2. Daftarkan seluruh sub-modul IPC
   registerWindowIpc(ipcMain, ctx);
   registerAccountIpc(ipcMain, ctx);
   registerShowcaseIpc(ipcMain, ctx);
   registerVideoIpc(ipcMain, ctx);
   registerScheduleIpc(ipcMain, ctx);
   registerAiConfigIpc(ipcMain, ctx);
+  registerRemotionIpc(ipcMain, ctx);
+  registerEdu3DIpc(ipcMain, ctx);
+  registerKartun3DIpc(ipcMain, ctx);
 
-  // 3. Daftarkan handler utama dengan proteksi safeHandle
+  // Mode Perangkat Ringan (otomatis dari spek, bisa dipaksa dari Pengaturan AI)
+  if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+  perfProfile.initPerfProfile(SESSIONS_DIR);
+  console.log('[Performa]', perfProfile.describePerfProfile());
+  safeHandle('perf:get', async () => ({ ...perfProfile.getPerfProfile(), description: perfProfile.describePerfProfile() }));
+  safeHandle('perf:set-mode', async (event, mode) => {
+    perfProfile.setPerfMode(mode);
+    return { ...perfProfile.getPerfProfile(), description: perfProfile.describePerfProfile() };
+  });
+
+  // =========================================================================
+  // OVERRIDE: BUKA CHROME TIKTOK STREAMER DENGAN SESI AKUN YANG AKTIF
+  // =========================================================================
+  const handleOpenStreamerForActiveAccount = async (targetUsernameExplicit = null) => {
+    try {
+      const chromePath = getOriginalChromeExecutablePath();
+      if (!chromePath) return { success: false, error: 'Google Chrome tidak ditemukan.' };
+
+      const activeUser = cleanUserIdentifier(targetUsernameExplicit || getActiveTikTokUsername());
+      const profileDir = getTikTokProfileDir(activeUser);
+
+      const chromeArgs = [
+        `--user-data-dir=${profileDir}`,
+        '--hide-crash-restore-bubble', // jangan munculkan "Restore pages?" (Chrome bot ditutup paksa)
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--window-size=1220,860',
+        'https://shop.tiktok.com/streamer/showcase/product/list'
+      ];
+
+      const p = spawn(chromePath, chromeArgs, { detached: false, stdio: 'ignore' });
+      return { success: true, account: activeUser };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  };
+
+  safeHandle('open-tiktok-streamer', async (event, targetAcc) => {
+    return await handleOpenStreamerForActiveAccount(targetAcc);
+  });
+
+  safeHandle('open-tiktok-shop-streamer', async (event, targetAcc) => {
+    return await handleOpenStreamerForActiveAccount(targetAcc);
+  });
+
+  // =========================================================================
+  // OVERRIDE: ISOLASI OTOMATIS DATA SHOWCASE PER USERNAME AKUN AKTIF
+  // =========================================================================
+  safeHandle('get-tiktok-showcase-products', async (event, forceRefresh = false, explicitAccount = null) => {
+    try {
+      const targetUser = cleanUserIdentifier(explicitAccount || getActiveTikTokUsername());
+      const af = require('../core/accountFiles');   // folder akun dulu, lalu file lama
+      const legacyShowcase = path.resolve(DATA_ROOT, 'storage', `showcase_${targetUser}.json`);
+      const accountShowcaseFile = af.readPath(legacyShowcase);
+      const fallbackFile = af.readPath(path.resolve(DATA_ROOT, 'sessions', `showcase_${targetUser}.json`));
+
+      // 1. Cek berkas cache spesifik milik akun aktif ini
+      let resolvedFile = null;
+      if (fs.existsSync(accountShowcaseFile)) resolvedFile = accountShowcaseFile;
+      else if (fs.existsSync(fallbackFile)) resolvedFile = fallbackFile;
+
+      if (resolvedFile && !forceRefresh) {
+        const cached = JSON.parse(fs.readFileSync(resolvedFile, 'utf-8'));
+        return { success: true, account: targetUser, data: Array.isArray(cached) ? cached : (cached.products || []) };
+      }
+
+      // 2. Jika forceRefresh atau file belum ada, coba baca dari modul showcaseSession
+      if (typeof tiktokSessionManager.getShowcaseProductsForAccount === 'function') {
+        const fresh = await tiktokSessionManager.getShowcaseProductsForAccount(targetUser, forceRefresh);
+        if (fresh && fresh.success && Array.isArray(fresh.data)) {
+          fs.writeFileSync(af.writePath(legacyShowcase), JSON.stringify(fresh.data, null, 2), 'utf-8');
+          return { success: true, account: targetUser, data: fresh.data };
+        }
+      }
+
+      // 3. Jika belum pernah disinkronkan, kembalikan data kosong untuk akun ini (bukan akun lain)
+      return { success: true, account: targetUser, data: [] };
+    } catch (err) {
+      console.warn('[ShowcaseIPC] Gagal memuat produk showcase:', err.message);
+      return { success: false, error: err.message, data: [] };
+    }
+  });
+
+  safeHandle('get-showcase-metrics-store', async (event, explicitAccount = null) => {
+    try {
+      const targetUser = cleanUserIdentifier(explicitAccount || getActiveTikTokUsername());
+      const metricsFile = require('../core/accountFiles').readPath(path.resolve(DATA_ROOT, 'storage', `showcase_metrics_${targetUser}.json`));
+      if (fs.existsSync(metricsFile)) {
+        return JSON.parse(fs.readFileSync(metricsFile, 'utf-8'));
+      }
+      return {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  safeHandle('save-showcase-metrics-store', async (event, metricsObj, explicitAccount = null) => {
+    try {
+      const targetUser = cleanUserIdentifier(explicitAccount || getActiveTikTokUsername());
+      const metricsFile = require('../core/accountFiles').writePath(path.resolve(DATA_ROOT, 'storage', `showcase_metrics_${targetUser}.json`));
+      fs.writeFileSync(metricsFile, JSON.stringify(metricsObj || {}, null, 2), 'utf-8');
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  // ==========================================
+  // IPC HANDLER PEMBARUAN SISTEM (GAME POPUP)
+  // ==========================================
+  safeHandle('updater:check-for-updates', async () => {
+    try {
+      console.log('[AutoUpdater] Menerima permintaan pengecekan update dari UI...');
+      if (app.isPackaged) {
+        return await autoUpdater.checkForUpdates();
+      } else {
+        console.log('[AutoUpdater] Melewati pengecekan update otomatis (mode development).');
+        return { skipped: true, reason: 'development-mode' };
+      }
+    } catch (err) {
+      console.warn('[AutoUpdater] Gagal saat memeriksa update manual:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  safeHandle('updater:start-download', async () => {
+    try {
+      console.log('[AutoUpdater] Memulai proses unduh pembaruan...');
+      await autoUpdater.downloadUpdate();
+      return { success: true };
+    } catch (err) {
+      console.error('[AutoUpdater] Gagal mengunduh pembaruan:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  safeHandle('updater:quit-and-install', async () => {
+    isAppExiting = true;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    await sendOfflinePingAsync();
+    clearKalodataStorageOnExit();
+    autoUpdater.quitAndInstall(true, true);
+    return { success: true };
+  });
+
+  safeHandle('license:get-machine-id', async () => {
+    return getHardwareId();
+  });
+
+  safeHandle('license:activate', async (event, licenseKey) => {
+    const hwid = getHardwareId();
+    const result = await verifyLicenseWithServer(licenseKey, hwid);
+    
+    if (result && result.valid) {
+      startLicenseHeartbeat(licenseKey);
+      saveLicenseKey(licenseKey);
+    } else if (result && !result.networkError) {
+      // Server menolak key (salah / dicabut) → jangan dikunci lagi
+      result.wrongKey = true;
+      if (loadSavedLicenseKey() === licenseKey) clearSavedLicenseKey();
+    }
+    
+    return result;
+  });
+
+  safeHandle('license:get-saved', async () => loadSavedLicenseKey());
+
+  safeHandle('license:clear-saved', async () => {
+    clearSavedLicenseKey();
+    return true;
+  });
+
+  safeHandle('license:redirect-main', async () => {
+    if (mainWindow) {
+      // Langsung ke dashboard akun terakhir (halaman pilih akun hanya bila belum ada akun)
+      let active = null;
+      try {
+        const reg = sessionManager.getAccountsRegistry();
+        const list = reg?.accounts || [];
+        const pick = list.find((a) => a.id === reg.activeAccountId) || list[0];
+        if (pick) active = sessionManager.setActiveAccount(pick.id);
+        if (active?.partition) {
+          setupPartitionHeaders(active.partition);
+          await sessionManager.restoreSessionToPartition(active.partition).catch(() => {});
+        }
+      } catch (e) {
+        console.warn('[Startup] Gagal memilih akun terakhir:', e.message);
+      }
+      // Selalu ke dashboard (beranda). Belum ada akun → tambah lewat menu Kelola Akun.
+      mainWindow.loadFile(path.join(__dirname, '../renderer/dashboard.html'));
+    }
+    return { success: true };
+  });
+
   safeHandle('open-external-url', async (event, url) => {
     if (url && typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
       await shell.openExternal(url);
@@ -294,7 +851,10 @@ app.whenReady().then(() => {
 
   safeHandle('tiktok:sync-profile', async (event, accountId) => {
     try {
-      const result = await tiktokSessionManager.syncTikTokProfile(accountId || 'karuna_id');
+      if (!accountId) {
+        return { success: false, error: 'ID Akun tidak ditemukan' };
+      }
+      const result = await tiktokSessionManager.syncTikTokProfile(accountId);
       if (result && result.success && mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('account-updated', result.account);
         mainWindow.webContents.send('profile-updated', result.account);
@@ -307,7 +867,10 @@ app.whenReady().then(() => {
 
   safeHandle('sync-tiktok-profile', async (event, accountId) => {
     try {
-      const result = await tiktokSessionManager.syncTikTokProfile(accountId || 'karuna_id');
+      if (!accountId) {
+        return { success: false, error: 'ID Akun tidak ditemukan' };
+      }
+      const result = await tiktokSessionManager.syncTikTokProfile(accountId);
       if (result && result.success && mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('account-updated', result.account);
         mainWindow.webContents.send('profile-updated', result.account);
@@ -426,8 +989,8 @@ app.whenReady().then(() => {
 
   safeHandle('run-flow-to-jj-from-storyboard', async (event, params = {}) => {
     const pipelineStartTime = Date.now();
-    const STORYBOARDS_DIR = path.resolve(PROJECT_ROOT, 'storage/storyboards');
-    const STORAGE_IMG_DIR = path.resolve(PROJECT_ROOT, 'storage/images');
+    const STORYBOARDS_DIR = path.resolve(DATA_ROOT, 'storage/storyboards');
+    const STORAGE_IMG_DIR = path.resolve(DATA_ROOT, 'storage/images');
 
     const sendLog = (status, percent = 50) => {
       const elapsed = ((Date.now() - pipelineStartTime) / 1000).toFixed(1);
@@ -533,11 +1096,15 @@ app.whenReady().then(() => {
     return await openCapCutLoginSession();
   });
 
-  // 4. Buat MainWindow setelah seluruh IPC siap
   createMainWindow();
-  trayManager.createSystemTray(() => mainWindow, () => {
-    isQuitting = true;
-    app.quit();
+  trayManager.createSystemTray(() => mainWindow, async () => {
+    if (!isAppExiting) {
+      isAppExiting = true;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      await sendOfflinePingAsync();
+      clearKalodataStorageOnExit();
+      app.exit(0);
+    }
   });
 
   setInterval(() => {
@@ -547,15 +1114,26 @@ app.whenReady().then(() => {
   }, 10000);
 });
 
-app.on('before-quit', () => {
-  isQuitting = true;
-  clearKalodataStorageOnExit();
+app.on('before-quit', async (event) => {
+  if (!isAppExiting) {
+    event.preventDefault();
+    isAppExiting = true;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    await sendOfflinePingAsync();
+    clearKalodataStorageOnExit();
+    app.exit(0);
+  }
 });
 
-app.on('window-all-closed', () => {
-  clearKalodataStorageOnExit();
-  if (process.platform !== 'darwin') {
-    app.quit();
+app.on('window-all-closed', async () => {
+  if (!isAppExiting) {
+    isAppExiting = true;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    await sendOfflinePingAsync();
+    clearKalodataStorageOnExit();
+    if (process.platform !== 'darwin') {
+      app.exit(0);
+    }
   }
 });
 

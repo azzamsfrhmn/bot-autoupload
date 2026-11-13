@@ -2,7 +2,10 @@ const { BrowserWindow, session, net } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-const SESSIONS_DIR = path.join(__dirname, '../../../sessions');
+// File per akun di sessions/akun/<platform>_<username>/ (baca: folder akun dulu, lalu file lama)
+const af = require('../../core/accountFiles');
+
+const SESSIONS_DIR = path.join(process.cwd(), 'sessions');
 const ACCOUNTS_REGISTRY_PATH = path.join(SESSIONS_DIR, 'accounts_registry.json');
 const DEFAULT_SESSION_FILE = path.join(SESSIONS_DIR, 'instagram_session.json');
 
@@ -18,9 +21,15 @@ function sanitizeAccountFilename(name) {
   return String(name).trim().replace(/^@/, '').replace(/[^a-zA-Z0-9._-]/g, '_').toLowerCase();
 }
 
+// Path cache profil untuk DIBACA (folder akun bila ada, selain itu file lama)
 function getAccountCachePath(accountId) {
   const safeId = sanitizeAccountFilename(accountId);
-  return path.join(SESSIONS_DIR, `profile_cache_${safeId}.json`);
+  return af.readPath(path.join(SESSIONS_DIR, `profile_cache_${safeId}.json`));
+}
+// Path cache profil untuk DITULIS (folder akun)
+function getAccountCacheWritePath(accountId) {
+  const safeId = sanitizeAccountFilename(accountId);
+  return af.writePath(path.join(SESSIONS_DIR, `profile_cache_${safeId}.json`));
 }
 
 function getAccountAvatarPath(accountId) {
@@ -84,8 +93,8 @@ function getAccountsRegistry() {
 
       const cleanUser = sanitizeAccountFilename(acc.username || acc.id);
       if (!acc.sessionFile || !fs.existsSync(acc.sessionFile)) {
-        acc.sessionFile = path.join(SESSIONS_DIR, `${cleanUser}.json`);
-        isDirty = true;
+        const resolved = af.readPath(path.join(SESSIONS_DIR, `${cleanUser}.json`));
+        if (acc.sessionFile !== resolved) { acc.sessionFile = resolved; isDirty = true; }
       }
 
       if (!acc.partition) {
@@ -146,7 +155,7 @@ function getActiveSessionFilePath() {
   const active = getActiveAccount();
   if (!active) return DEFAULT_SESSION_FILE;
   const cleanUser = sanitizeAccountFilename(active.username || active.id);
-  const preferred = path.join(SESSIONS_DIR, `${cleanUser}.json`);
+  const preferred = af.readPath(path.join(SESSIONS_DIR, `${cleanUser}.json`));
   if (fs.existsSync(preferred)) return preferred;
   return active.sessionFile || DEFAULT_SESSION_FILE;
 }
@@ -170,11 +179,13 @@ function saveSessionToFile(cookies, accountIdentifier = null) {
       cleanName = sanitizeAccountFilename(curActive?.username || curActive?.id || TARGET_USERNAME);
     }
 
-    const namedFilePath = path.join(SESSIONS_DIR, `${cleanName}.json`);
+    // Folder akun (sessions/akun/<platform>_<username>/session.json) bila akun dikenal
+    const namedFilePath = af.writePath(path.join(SESSIONS_DIR, `${cleanName}.json`), targetAcc || null);
 
     fs.writeFileSync(namedFilePath, JSON.stringify(cookies, null, 2), 'utf-8');
 
-    if (targetAcc?.id && targetAcc.id !== cleanName) {
+    // salinan session_<id>.json hanya untuk akun yang belum punya folder (format lama)
+    if (targetAcc?.id && targetAcc.id !== cleanName && namedFilePath === path.join(SESSIONS_DIR, `${cleanName}.json`)) {
       try {
         fs.writeFileSync(path.join(SESSIONS_DIR, `session_${targetAcc.id}.json`), JSON.stringify(cookies, null, 2), 'utf-8');
       } catch (e) {}
@@ -209,9 +220,9 @@ function loadSessionFromFile(accountIdentifier = null) {
       const matched = reg.accounts.find(a => a.id === accountIdentifier || a.username === accountIdentifier);
       const cleanUser = matched ? sanitizeAccountFilename(matched.username) : '';
 
-      if (cleanUser) candidates.push(path.join(SESSIONS_DIR, `${cleanUser}.json`));
-      candidates.push(path.join(SESSIONS_DIR, `${cleanInput}.json`));
-      candidates.push(path.join(SESSIONS_DIR, `session_${accountIdentifier}.json`));
+      if (cleanUser) candidates.push(af.readPath(path.join(SESSIONS_DIR, `${cleanUser}.json`)));
+      candidates.push(af.readPath(path.join(SESSIONS_DIR, `${cleanInput}.json`)));
+      candidates.push(af.readPath(path.join(SESSIONS_DIR, `session_${accountIdentifier}.json`)));
       if (matched?.sessionFile) candidates.push(matched.sessionFile);
     } else {
       candidates.push(getActiveSessionFilePath());
@@ -229,6 +240,26 @@ function loadSessionFromFile(accountIdentifier = null) {
     }
   } catch (err) {
     console.error('[loadSessionFromFile Error]:', err.message);
+  }
+  return null;
+}
+
+// Sesi khusus akun Instagram (instagram_<user>.json) — dicari per akun Instagram agar tidak tertukar dengan akun TikTok ber-username sama
+function loadInstagramSession(identifier) {
+  try {
+    const key = sanitizeAccountFilename(identifier);
+    if (!key || key === 'default') return null;
+    const reg = getAccountsRegistry();
+    const acc = reg.accounts.find((a) => a.platform === 'instagram'
+      && [a.id, a.username].some((v) => v && (sanitizeAccountFilename(v) === key || sanitizeAccountFilename(v) === `ig_${key}`)));
+    const files = [acc?.sessionFile, af.readPath(path.join(SESSIONS_DIR, `instagram_${key.replace(/^ig_/, '')}.json`))].filter(Boolean);
+    for (const f of files) {
+      if (!fs.existsSync(f)) continue;
+      const parsed = JSON.parse(fs.readFileSync(f, 'utf-8'));
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (err) {
+    console.error('[loadInstagramSession Error]:', err.message);
   }
   return null;
 }
@@ -301,7 +332,8 @@ function getCachedProfile(accountId = null) {
 
 async function restoreSessionToPartition(partitionName = null) {
   const active = getActiveAccount();
-  const cookies = loadSessionFromFile(active?.username || active?.id);
+  const cookies = (active?.platform === 'instagram' ? loadInstagramSession(active.id) : null)
+    || loadSessionFromFile(active?.username || active?.id);
   if (!cookies || !Array.isArray(cookies)) return false;
 
   const part = partitionName || getActivePartitionName();
@@ -334,7 +366,8 @@ function saveAccountSession(accountData, cookies) {
   const rawUsername = accountData.username || (platform === 'tiktok' ? 'tiktok_creator' : TARGET_USERNAME);
   const cleanUsername = sanitizeAccountFilename(rawUsername);
   
-  const sessionFilePath = path.join(SESSIONS_DIR, `${cleanUsername}.json`);
+  // akun mungkin belum ada di registri → beri hint platform+username agar langsung ke foldernya
+  const sessionFilePath = af.writePath(path.join(SESSIONS_DIR, `${cleanUsername}.json`), { platform, username: rawUsername });
   fs.writeFileSync(sessionFilePath, JSON.stringify(cookies, null, 2), 'utf-8');
 
   const partitionName = platform === 'tiktok' 
@@ -386,6 +419,12 @@ function removeAccount(accountId) {
     const avatarFile = getAccountAvatarPath(cleanUser);
     if (fs.existsSync(cacheFile)) try { fs.unlinkSync(cacheFile); } catch (e) {}
     if (fs.existsSync(avatarFile)) try { fs.unlinkSync(avatarFile); } catch (e) {}
+
+    // Hapus folder akun (sessions/akun/<platform>_<username>/) beserta isinya
+    try {
+      const dir = af.accountDir(target);
+      if (dir && dir.startsWith(af.ACCOUNT_ROOT()) && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    } catch (e) {}
 
     reg.accounts = reg.accounts.filter((a) => a.id !== target.id && a.username !== target.username);
     if (reg.activeAccountId === target.id) {
@@ -658,7 +697,7 @@ async function getInstagramProfileAndFeed() {
           mergedProfile.posts = finalPosts;
 
           try {
-            fs.writeFileSync(getAccountCachePath(accIdentifier), JSON.stringify(mergedProfile, null, 2), 'utf-8');
+            fs.writeFileSync(getAccountCacheWritePath(accIdentifier), JSON.stringify(mergedProfile, null, 2), 'utf-8');
           } catch (e) {}
 
           resolve({ profile: mergedProfile, posts: finalPosts });
@@ -699,6 +738,8 @@ module.exports = {
   removeAccount,
   saveSessionToFile,
   loadSessionFromFile,
+  loadInstagramSession,
+  saveAccountsRegistry,
   restoreSessionToPartition,
   getInstagramProfileAndFeed,
   clearSessionData,

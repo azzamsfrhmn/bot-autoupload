@@ -108,7 +108,7 @@ export async function renderSavedImages() {
         </div>
         <div class="storage-card-actions">
           <button type="button" class="btn-storage-use" data-path="${item.filePath}">Gunakan</button>
-          <button type="button" class="btn-storage-del" data-id="${item.id || ''}" data-path="${item.filePath || ''}" title="Hapus Gambar">🗑</button>
+          <button type="button" class="btn-storage-del" data-id="${item.id || ''}" data-path="${item.filePath || ''}" title="Hapus Gambar"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></button>
         </div>
       `;
 
@@ -208,14 +208,15 @@ export function initImageStorageManager() {
       }
 
       delBtn.disabled = true;
-      delBtn.textContent = '⏳';
+      const delIcon = delBtn.innerHTML;
+      delBtn.textContent = '…';
 
       const res = await executeDeleteImage(id, pathStr);
 
       if (res && res.success === false) {
         alert('Gagal menghapus gambar: ' + (res.error || 'Terjadi kesalahan sistem'));
         delBtn.disabled = false;
-        delBtn.textContent = '🗑';
+        delBtn.innerHTML = delIcon;
       } else {
         const card = delBtn.closest('.storage-item-card');
         if (card) {
@@ -240,7 +241,7 @@ export function initImageStorageManager() {
     }
 
     btnRunImageGen.disabled = true;
-    btnRunImageGen.innerHTML = `⏳ ChatGPT Sedang Merender Gambar (DALL·E 3)...`;
+    btnRunImageGen.innerHTML = `ChatGPT Sedang Merender Gambar (DALL·E 3)...`;
     if (imageResultBox) imageResultBox.style.display = 'none';
     showAlert('Sedang memproses prompt gambar Anda...', false);
 

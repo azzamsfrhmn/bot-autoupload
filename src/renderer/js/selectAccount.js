@@ -1,4 +1,27 @@
-document.addEventListener('DOMContentLoaded', () => {
+// Dibuka setelah lisensi valid (?auto=1): langsung masuk dashboard akun terakhir yang dipakai
+const AUTO_ENTER = new URLSearchParams(window.location.search).get('auto') === '1';
+if (AUTO_ENTER) document.documentElement.style.visibility = 'hidden';
+
+async function autoEnterDashboard() {
+  try {
+    const data = await window.electronAPI?.getAllAccounts?.();
+    const accounts = Array.isArray(data) ? data : (data?.accounts || []);
+    if (accounts.length === 0) return false;
+    const active = accounts.find((a) => a.id === data?.activeAccountId) || accounts[0];
+    await window.electronAPI?.switchActiveAccount?.(active.id);
+    window.location.href = 'dashboard.html';
+    return true;
+  } catch (err) {
+    console.warn('[SelectAccount] Gagal masuk otomatis:', err);
+    return false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  if (AUTO_ENTER) {
+    if (await autoEnterDashboard()) return;
+    document.documentElement.style.visibility = '';
+  }
   document.getElementById('btnWinMinimize')?.addEventListener('click', () => window.electronAPI?.minimizeWindow());
   document.getElementById('btnWinClose')?.addEventListener('click', () => window.electronAPI?.closeWindow());
 
@@ -70,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const avatarEl = `
-          <div style="position: relative; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; background: #1e293b; display: flex; align-items: center; justify-content: center;">
+          <div style="position: relative; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; background: #24272b; display: flex; align-items: center; justify-content: center;">
             <img src="${avatarUrl}" alt="${username}" referrerpolicy="no-referrer"
                  style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block;" 
                  onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">

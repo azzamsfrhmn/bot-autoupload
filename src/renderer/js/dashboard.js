@@ -10,6 +10,7 @@ import { initProfileManager, loadFullProfile, updateSidebarProfile } from './mod
 import { initAiSettingsManager } from './modules/aiSettingsManager.js';
 import { initAccountManager } from './modules/accountManager.js';
 import { initAccountSwitcher } from './modules/accountSwitcher.js';
+import { videoThumbHtml, hydrateVideoThumbs } from './modules/videoThumbs.js';
 import { initShowcaseManager } from './modules/showcaseManager.js';
 import { initLoadingIndicator } from './modules/loadingIndicator.js';
 import { initVideoGenManager, startVideoTimer, stopVideoTimer } from '../../core/videoGenManager.js';
@@ -58,6 +59,18 @@ const PLATFORM_BRAND_ICONS = {
 async function initDashboardApp() {
   console.log('[Dashboard] Memulai inisialisasi modul...');
 
+  // Konsep pribadi (Remotion, 3D Edukasi, 3D Cara Kerja, 3D Kartun) tersembunyi untuk pembeli.
+  // Pemilik: tekan Ctrl+Shift+K untuk tampil/sembunyi (tersimpan di PC ini saja).
+  try {
+    if (localStorage.getItem('showPrivateConcepts') === '1') document.body.classList.add('show-private-concepts');
+  } catch (e) {}
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'K' || e.key === 'k')) {
+      const on = document.body.classList.toggle('show-private-concepts');
+      try { localStorage.setItem('showPrivateConcepts', on ? '1' : '0'); } catch (err) {}
+    }
+  });
+
   // 0. Kontrol Jendela Kustom (Custom Title Bar Frameless)
   const btnWinMinimize = document.getElementById('btnWinMinimize');
   const btnWinMaximize = document.getElementById('btnWinMaximize');
@@ -82,19 +95,26 @@ async function initDashboardApp() {
     console.error('[Dashboard Error] Gagal memuat tab navigation:', err);
   }
 
-  // 2. Modul Profil & Feed
+  // 2. Modul Kelola Multi-Akun dipasang LEBIH DULU (supaya kartu akun di sidebar tetap bisa diklik
+  //    walaupun pemuatan profil lambat / belum ada akun sama sekali)
+  try {
+    initAccountManager();
+    initAccountSwitcher();
+  } catch (err) {
+    console.error('[Dashboard Error] Gagal memuat account manager:', err);
+  }
+
+  // 3. Modul Profil & Feed — feed tidak ditunggu (bisa lama / menggantung bila belum ada akun)
   try {
     initProfileManager();
-    await updateSidebarProfile();
-    await loadFullProfile();
+    await Promise.race([updateSidebarProfile(), new Promise((r) => setTimeout(r, 4000))]);
+    Promise.resolve().then(() => loadFullProfile()).catch((err) => console.warn('[Dashboard] Feed profil gagal:', err));
   } catch (err) {
     console.error('[Dashboard Error] Gagal memuat profileManager:', err);
   }
 
-  // 3. Modul Kelola Multi-Akun & Auto-Sync
+  // 3b. Auto-Sync profil TikTok akun aktif
   try {
-    initAccountManager();
-    initAccountSwitcher();
 
     window.electronAPI?.getAllAccounts?.().then((accData) => {
       const activeId = accData?.activeAccountId || accData?.accounts?.[0]?.id;
@@ -425,7 +445,7 @@ async function initDashboardApp() {
             const card = document.createElement('div');
             card.style.cssText = 'position: relative; aspect-ratio: 9/16; border-radius: 6px; overflow: hidden; background: #000; border: 2px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.2s ease;';
             card.innerHTML = `
-              <video src="${toSafeFileUrl(vid.filePath)}" muted style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;"></video>
+              ${videoThumbHtml(vid.filePath, vid.thumbnailPath, 'width:100%;height:100%;object-fit:cover;pointer-events:none;display:block;')}
               <div style="position: absolute; bottom: 0; inset-inline: 0; background: linear-gradient(transparent, rgba(0,0,0,0.85)); font-size: 9px; padding: 6px 4px 2px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                 ${vid.fileName}
               </div>
@@ -438,6 +458,7 @@ async function initDashboardApp() {
             };
             jjVideoGrid.appendChild(card);
           });
+          hydrateVideoThumbs(jjVideoGrid);
         }
       }
 
@@ -558,6 +579,10 @@ async function initDashboardApp() {
       const model = `${s.model || 'HP'} · ${s.via === 'wifi' ? '📶 WiFi ' + (s.device || '').split(':')[0] : '🔌 USB'}`;
       if (!s.shopee) { el.innerHTML = `🟠 ${model}: app Shopee belum terpasang.`; return; }
       if (!s.tapper) { el.innerHTML = `🟠 ${model}: Tap Server belum terpasang. Klik "Siapkan HP".`; if (btnSetup) btnSetup.textContent = 'Kirim APK'; return; }
+      if (s.tapperState === 'crashed') {
+        el.innerHTML = `🟠 ${model}: Tap Server dimatikan sistem HP. Di HP: Setelan > Aplikasi > Tap Server > Mulai otomatis ON & Penghemat baterai "Tidak ada batasan", lalu Aksesibilitas > Tap Server matikan-nyalakan lagi.`;
+        return;
+      }
       if (!s.enabled) { el.innerHTML = `🟠 ${model}: Tap Server belum aktif. Aktifkan di Setelan > Aksesibilitas > Tap Server.`; return; }
       el.innerHTML = `🟢 ${model} siap (${s.screen ? s.screen.width + 'x' + s.screen.height : ''}). Shopee login + Tap Server aktif.`;
     } catch (e) {
@@ -644,7 +669,13 @@ async function initDashboardApp() {
       }
 
       if (brandIconEl) {
-        if (isShopee) {
+        if (!activeAcc) {
+          // Belum ada akun → logo aplikasi
+          brandIconEl.innerHTML = '<img src="assets/icon.ico" alt="AutoUpload" style="width:100%;height:100%;object-fit:contain;border-radius:inherit">';
+          brandIconEl.style.background = 'transparent';
+          brandIconEl.style.border = 'none';
+          brandIconEl.style.color = '';
+        } else if (isShopee) {
           brandIconEl.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2a4.5 4.5 0 0 0-4.47 4H4.2a1 1 0 0 0-1 1.07l.9 13.1A2 2 0 0 0 6.1 22h11.8a2 2 0 0 0 2-1.83l.9-13.1a1 1 0 0 0-1-1.07h-3.33A4.5 4.5 0 0 0 12 2zm0 1.8A2.7 2.7 0 0 1 14.65 6h-5.3A2.7 2.7 0 0 1 12 3.8zm.15 5.2c1.6 0 2.6.7 2.9 1.05l-.8 1.1c-.4-.33-1.15-.75-2.1-.75-.9 0-1.4.4-1.4.9 0 .6.7.85 1.75 1.2 1.5.5 2.85 1.1 2.85 2.8 0 1.6-1.35 2.8-3.4 2.8-1.6 0-2.85-.7-3.4-1.3l.85-1.15c.6.55 1.5 1.05 2.55 1.05 1.05 0 1.65-.5 1.65-1.15 0-.75-.75-1-1.85-1.4-1.4-.45-2.7-1.05-2.7-2.6 0-1.45 1.3-2.55 3.1-2.55z"/></svg>';
           brandIconEl.style.background = '#ee4d2d';
           brandIconEl.style.border = '1px solid rgba(255, 255, 255, 0.15)';
@@ -701,17 +732,9 @@ async function initDashboardApp() {
         }
       }
 
-      // Auto Pilot hanya untuk Instagram
-      const tabAutoPilot = document.getElementById('tabAutoPilot');
-      if (tabAutoPilot) {
-        if (isTikTok || isFacebook || isShopee) {
-          tabAutoPilot.style.setProperty('display', 'none', 'important');
-          if (document.getElementById('viewAutoPilot')?.classList.contains('active-view')) {
-            document.getElementById('tabSchedule')?.click();
-          }
-        } else {
-          tabAutoPilot.style.removeProperty('display');
-        }
+      // Auto Pilot dihapus di semua platform: jangan pernah tampil
+      if (document.getElementById('viewAutoPilot')?.classList.contains('active-view')) {
+        document.getElementById('tabSchedule')?.click();
       }
 
       // Shopee: input link produk + status HP; sembunyikan produk TikTok
@@ -1723,8 +1746,8 @@ function renderSavedVideos(videos, onPlayCallback) {
     const fileSrc = `file:///${v.filePath.replace(/\\/g, '/').replace(/^\/+/, '')}`;
     return `
       <div class="storage-card">
-        <video src="${fileSrc}" muted style="width: 100%; height: 100%; object-fit: cover;"></video>
-        
+        ${videoThumbHtml(v.filePath, v.thumbnailPath)}
+
         <div class="storage-card-overlay">
           <div style="display: flex; justify-content: flex-end;">
             <button type="button" class="btn-action-delete btn-del-video" data-path="${v.filePath}" data-file="${v.fileName}" title="Hapus Video">
@@ -1765,4 +1788,7 @@ function renderSavedVideos(videos, onPlayCallback) {
       }
     });
   });
+
+  // buat thumbnail yang belum ada (berurutan, di belakang layar)
+  hydrateVideoThumbs(container);
 }

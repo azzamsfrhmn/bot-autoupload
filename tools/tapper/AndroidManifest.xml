@@ -4,7 +4,25 @@
   <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="30"/>
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   <uses-permission android:name="android.permission.DISABLE_KEYGUARD"/>
-  <application android:label="Tap Server" android:allowBackup="false">
+  <!-- Server mini WiFi (PC ⇄ HP tanpa kabel) -->
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+  <!-- Android 9 ke bawah: simpan video kiriman PC ke Galeri -->
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+  <!-- Android 11+: boleh melihat app Shopee terpasang -->
+  <queries>
+    <package android:name="com.shopee.id"/>
+  </queries>
+  <application android:label="Tap Server" android:icon="@mipmap/ic_launcher" android:allowBackup="false">
+    <activity
+        android:name=".MainActivity"
+        android:exported="true"
+        android:label="Tap Server">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
     <activity
         android:name=".WakeActivity"
         android:exported="true"

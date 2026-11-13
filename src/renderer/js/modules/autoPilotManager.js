@@ -184,7 +184,7 @@ Syarat ketat:
         mediaFiles: [generatedFilePath]
       });
 
-      const finalCaption = captionRes?.caption || `Upgrade kebutuhan digitalmu sekarang dengan ${topic}! Kualitas terjamin, proses cepat, dan bergaransi resmi hanya di @etnicpremium. Order langsung via link di bio! ✨`;
+      const finalCaption = captionRes?.caption || `Upgrade kebutuhan digitalmu sekarang dengan ${topic}! Kualitas terjamin, proses cepat, dan bergaransi resmi hanya di @etnicpremium. Order langsung via link di bio! `;
       addLog('Teks caption dan hashtag berhasil dibuat.');
 
       updateProgress(90, 'Menyimpan Postingan ke Antrean Jadwal...');
@@ -208,7 +208,7 @@ Syarat ketat:
     } catch (err) {
       console.error(err);
       updateProgress(0, 'Terjadi Kesalahan');
-      addLog(`❌ Error: ${err.message}`);
+      addLog(`Error: ${err.message}`);
       showAlert(`Gagal: ${err.message}`, true);
     } finally {
       btnRunAutoPilot.disabled = false;
@@ -278,7 +278,7 @@ Syarat ketat:
     } catch (err) {
       console.error(err);
       updateProgress(0, 'Terjadi Kesalahan Video');
-      addLog(`❌ Error: ${err.message}`);
+      addLog(`Error: ${err.message}`);
       showAlert(`Gagal Auto Pilot Video: ${err.message}`, true);
     } finally {
       btnRunAutoPilot.disabled = false;

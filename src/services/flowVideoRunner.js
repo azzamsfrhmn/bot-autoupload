@@ -1,26 +1,32 @@
 /**
  * src/services/flowVideoRunner.js
- * Arsitektur Pure Raw CDP (Zero DOM Injection - Mengikuti Pola Vibot)
+ * Arsitektur Pure Raw CDP (Zero DOM Injection)
  * - Pengecekan Kredit Awal Ketat (Batas Minimum: 10 Kredit)
- * - Otomatis Hapus Akun & Berkas Sesi jika Kredit < 10, lalu Langsung Rotasi ke Akun Berikutnya
+ * - Otomatis Rotasi ke Akun Cadangan jika Kredit < 10
+ * - Blokir render jika akun cadangan belum login / kuota seluruh akun habis
  * - Copy-Paste Prompt Instan via Clipboard (Ctrl+V)
- * - Deteksi Pill Setelan Default ("Nano Banana" / "Gambar" / "Video") -> Ubah ke Tab "Video"
- * - Pemilihan Akurat Jenis (Bahan/Frame), Rasio (9:16), Model (Omni/Veo), Resolusi (360p/720p), Durasi, & x1
+ * - Pemilihan Akurat: Jenis (Bahan/Frame), Rasio (9:16), Model (Omni/Veo), Resolusi (360p/720p), Durasi, & Output x1
+ * - Verifikasi fisik berkas video (> 50 KB) sebelum memotong kredit
+ * - Auto-Decrement Saldo Kredit (-10 Kredit) & Sinkronisasi UI Otomatis
  * - Multi-Strategy Video Downloader (Stream Blob Fetch + Network Sniffer + UI Download)
- * - Graceful Browser Close & Anti-Crash Bubble ("Restore pages?")
  */
 
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { dismissFlowOnboarding, disableFlowAgent, agreeFlowImageRights } = require('./flowOnboarding');
 const os = require('os');
 const http = require('http');
 const https = require('https');
 const { BrowserWindow, clipboard, nativeImage } = require('electron');
+// Jeda, batas tunggu & flag Chrome menyesuaikan spek perangkat (Mode Perangkat Ringan)
+const { scaleMs, chromeLiteArgs } = require('../core/perfProfile');
 
 const ROOT_DIR = process.cwd();
 const FLOW_BASE_DIR = path.resolve(ROOT_DIR, 'sessions/flow_profiles');
 const FLOW_CONFIG_FILE = path.resolve(FLOW_BASE_DIR, 'accounts_config.json');
+// Google Flow butuh minimal 12 kredit untuk 1 kali render video
+const MIN_FLOW_CREDIT = 12;
 
 const SESSIONS_VIDEOS_DIR = path.resolve(ROOT_DIR, 'sessions/generated_videos');
 const OUTPUT_VIDEOS_DIR = path.resolve(ROOT_DIR, 'storage/videos');
@@ -32,7 +38,7 @@ if (!fs.existsSync(SESSIONS_VIDEOS_DIR)) fs.mkdirSync(SESSIONS_VIDEOS_DIR, { rec
 if (!fs.existsSync(OUTPUT_VIDEOS_DIR)) fs.mkdirSync(OUTPUT_VIDEOS_DIR, { recursive: true });
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }
 
 async function humanDelay(min = 420, max = 650) {
@@ -141,7 +147,7 @@ class RawCDPClient {
 
           const matched = els.filter(el => {
             const rect = el.getBoundingClientRect();
-            if (rect.width < 12 || rect.height < 12 || rect.width > 950 || rect.height > 600) return false;
+            if (rect.width < 8 || rect.height < 8 || rect.width > 950 || rect.height > 600) return false;
             if (typeof minY === 'number' && rect.top < minY) return false;
             if (typeof maxY === 'number' && rect.bottom > maxY) return false;
 
@@ -190,6 +196,7 @@ class RawCDPClient {
   }
 
   async waitForElementCenter(queryOptions, timeoutMs = 20000) {
+    timeoutMs = scaleMs(timeoutMs);
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       const pos = await this.findElementCenter(queryOptions);
@@ -386,18 +393,29 @@ async function getPageWebSocketUrl(port, maxRetries = 25) {
 function parseGoogleFlowCreditResponse(bodyText) {
   if (!bodyText || typeof bodyText !== 'string') return '';
   try {
-    const nzlxgMatch = bodyText.match(/"nzlxg"\s*,\s*"\\?\[\s*(\d+)/) || bodyText.match(/nzlxg.*?(\d{1,4})/i);
+    const nzlxgMatch = bodyText.match(/"nzlxg"\s*,\s*"\\?\[\s*(\d+)/) || bodyText.match(/nzlxg.*?(\d{1,6})/i);
     if (nzlxgMatch && nzlxgMatch[1]) {
       return `${nzlxgMatch[1]} Kredit`;
     }
 
     const jsonMatch = bodyText.match(/"(?:credits?|balance|remaining_credits|available_credits)"\s*:\s*(\d+)/i) ||
-                      bodyText.match(/(\d{1,4})\s*(?:kredit|credits)/i);
+                      bodyText.match(/(\d{1,3}(?:[.,]\d{3})+|\d{1,6})\s*(?:kredit|credits)/i);
     if (jsonMatch && jsonMatch[1]) {
-      return `${jsonMatch[1]} Kredit`;
+      return `${String(jsonMatch[1]).replace(/[.,]/g, '')} Kredit`;
     }
   } catch (e) {}
   return '';
+}
+
+function notifyUIFlowAccountsUpdated() {
+  try {
+    const allWindows = BrowserWindow.getAllWindows();
+    allWindows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('flow-accounts-updated');
+      }
+    });
+  } catch (e) {}
 }
 
 function registerVideoToMetadata(videoFileName, sessionPath, storagePath, promptText, storyboardSourceFile) {
@@ -472,6 +490,7 @@ function registerVideoToMetadata(videoFileName, sessionPath, storagePath, prompt
   return videoData;
 }
 
+const lastSessionState = new Map();
 function checkAccountHasRealSession(accountId) {
   try {
     const profileDir = path.join(FLOW_BASE_DIR, accountId);
@@ -484,8 +503,19 @@ function checkAccountHasRealSession(accountId) {
     const targetCookieFile = fs.existsSync(networkCookies) ? networkCookies : (fs.existsSync(directCookies) ? directCookies : null);
     if (!targetCookieFile) return false;
 
-    const stats = fs.statSync(targetCookieFile);
-    return stats.size > 8000;
+    // Login Google = ada cookie sesi akun (nama cookie tersimpan polos di database SQLite Chrome).
+    // Ukuran file saja tidak cukup: membuka flow.google.com tanpa login juga membuat cookie.
+    // Sesaat setelah Chrome ditutup file terkunci (EBUSY) → coba ulang, lalu pakai hasil terakhir.
+    let buf = null;
+    for (let i = 0; i < 4 && !buf; i++) {
+      try { buf = fs.readFileSync(targetCookieFile); } catch (e) {
+        const t = Date.now(); while (Date.now() - t < 250) { /* tunggu kunci file lepas */ }
+      }
+    }
+    if (!buf) return lastSessionState.get(accountId) ?? true;
+    const loggedIn = buf.includes('__Secure-1PSID') || buf.includes('SAPISID');
+    lastSessionState.set(accountId, loggedIn);
+    return loggedIn;
   } catch (e) {
     return false;
   }
@@ -504,6 +534,8 @@ function getFlowAccountsConfigRaw() {
       ]
     };
   }
+  // Pastikan sakelar headless selalu tersimpan eksplisit (default nonaktif)
+  if (typeof cfg.headless !== 'boolean') cfg.headless = false;
   return cfg;
 }
 
@@ -516,11 +548,12 @@ function getFlowAccountsConfig() {
       if (hasRealSession) {
         acc.status = 'Sesi Aktif';
         if (!acc.credits || acc.credits === 'Tidak Tersedia') {
-          acc.credits = 'Tersedia';
+          acc.credits = 'Belum dicek';
         }
       } else {
         acc.status = 'Belum Login';
         acc.credits = 'Tidak Tersedia';
+        delete acc.creditsCheckedAt;
       }
     });
     saveFlowAccountsConfig(cfg);
@@ -530,6 +563,7 @@ function getFlowAccountsConfig() {
 
 function saveFlowAccountsConfig(cfg) {
   fs.writeFileSync(FLOW_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
+  notifyUIFlowAccountsUpdated();
 }
 
 function getProfileDirForAccount(accountId) {
@@ -541,6 +575,10 @@ function getProfileDirForAccount(accountId) {
 function deleteFlowAccount(accountId) {
   const cfg = getFlowAccountsConfigRaw();
   cfg.accounts = (cfg.accounts || []).filter((a) => a.id !== accountId);
+  // Nomori ulang: akun pertama yang tersisa otomatis menjadi Akun 1 (Utama)
+  cfg.accounts.forEach((a, i) => {
+    a.name = i === 0 ? 'Akun 1 (Utama)' : `Akun ${i + 1}`;
+  });
 
   if (cfg.activeAccountId === accountId) {
     cfg.activeAccountId = cfg.accounts[0]?.id || null;
@@ -548,7 +586,6 @@ function deleteFlowAccount(accountId) {
 
   saveFlowAccountsConfig(cfg);
 
-  // Hapus berkas profil sesi fisik
   const targetDir = path.join(FLOW_BASE_DIR, accountId);
   if (fs.existsSync(targetDir)) {
     try {
@@ -556,15 +593,7 @@ function deleteFlowAccount(accountId) {
     } catch (e) {}
   }
 
-  try {
-    const allWindows = BrowserWindow.getAllWindows();
-    allWindows.forEach((win) => {
-      if (!win.isDestroyed()) {
-        win.webContents.send('flow-accounts-updated');
-      }
-    });
-  } catch (e) {}
-
+  notifyUIFlowAccountsUpdated();
   return { success: true, cfg };
 }
 
@@ -582,20 +611,34 @@ async function openFlowLoginWindow(accountId = 'acc_1') {
     { detached: false, stdio: 'ignore' }
   );
 
+  // Selama jendela login terbuka: Chrome menulis cookie login ke disk beberapa detik setelah login,
+  // jadi cek berkala & perbarui kartu akun begitu sesi terdeteksi (tanpa menunggu jendela ditutup)
+  const sessionWatcher = setInterval(() => {
+    if (!checkAccountHasRealSession(accountId)) return;
+    const cfg = getFlowAccountsConfigRaw();
+    const acc = cfg.accounts.find((a) => a.id === accountId);
+    if (acc && acc.status !== 'Sesi Aktif') {
+      acc.status = 'Sesi Aktif';
+      if (!/\d/.test(String(acc.credits || ''))) acc.credits = 'Belum dicek';
+      saveFlowAccountsConfig(cfg);
+    }
+  }, 10000);
+
   return new Promise((resolve) => {
-    chromeProcess.on('close', () => {
+    chromeProcess.on('close', async () => {
+      clearInterval(sessionWatcher);
       const hasSession = checkAccountHasRealSession(accountId);
       const cfg = getFlowAccountsConfigRaw();
       const acc = cfg.accounts.find((a) => a.id === accountId);
       if (acc) {
         acc.status = hasSession ? 'Sesi Aktif' : 'Belum Login';
-        if (hasSession && (!acc.credits || acc.credits === 'Tidak Tersedia')) {
-          acc.credits = 'Tersedia';
-        }
         cfg.activeAccountId = accountId;
         saveFlowAccountsConfig(cfg);
       }
-      resolve({ success: true, accountId, status: acc?.status, credits: acc?.credits });
+      // Baca kredit asli dari Flow (bukan asumsi 50 kredit)
+      const realCredit = hasSession ? await silentSyncAccountCredits(accountId) : null;
+      const accNow = getFlowAccountsConfigRaw().accounts.find((a) => a.id === accountId);
+      resolve({ success: true, accountId, status: accNow?.status, credits: realCredit || accNow?.credits });
     });
   });
 }
@@ -605,12 +648,35 @@ async function openFlowWorker2LoginWindow(accountId = 'acc_1') {
 }
 
 // =========================================================================
-// PENGECEKAN KREDIT SENYAP (HEADLESS PURE RAW CDP)
+// PENGECEKAN KREDIT ASLI (DIBACA DARI PANEL AKUN GOOGLE FLOW)
+// Teks panel: "0 kredit Google Flow" & "Kredit diperbarui setiap hari pukul 02.44"
 // =========================================================================
+// Balasan batchexecute Flow (rpcids=nzlxg): )]}' ... [["wrb.fr","nzlxg","[50,3,8,1,null,50,[1793908220,505636000]]",...]]
+// → kredit = angka pertama; elemen terakhir = waktu reset kredit berikutnya (detik epoch). Reset harian → simpan jam:menit.
+function parseFlowCreditRpc(text) {
+  try {
+    const m = String(text || '').match(/"nzlxg","((?:[^"\\]|\\.)*)"/);
+    if (!m) return null;
+    const arr = JSON.parse(JSON.parse(`"${m[1]}"`));
+    const credit = Number(arr?.[0]);
+    if (!Number.isFinite(credit)) return null;
+    const resetSec = Number(arr?.[arr.length - 1]?.[0]);
+    let resetTime = '';
+    if (Number.isFinite(resetSec) && resetSec * 1000 - Date.now() < 26 * 3600 * 1000 && resetSec * 1000 > Date.now()) {
+      const d = new Date(resetSec * 1000);
+      resetTime = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+    return { credit, resetTime };
+  } catch (e) {
+    return null;
+  }
+}
+
 async function silentSyncAccountCredits(accountId = 'acc_1') {
   const profileDir = getProfileDirForAccount(accountId);
   const chromePath = getOriginalChromeExecutablePath();
   if (!chromePath || !fs.existsSync(profileDir)) return null;
+  if (!checkAccountHasRealSession(accountId)) return null;
 
   purgeTransientSessionData(profileDir);
 
@@ -619,15 +685,21 @@ async function silentSyncAccountCredits(accountId = 'acc_1') {
   let cdp = null;
 
   try {
-    chromeProcess = spawn(chromePath, [
+    // Chrome asli dengan jendela di luar layar (--headless sering dijeda/diblokir Google Flow)
+    chromeProcess = spawn(chromePath, [...chromeLiteArgs(), 
       `--remote-debugging-port=${randomPort}`,
       `--user-data-dir=${profileDir}`,
-      '--headless=new',
       '--no-first-run',
       '--no-default-browser-check',
-      '--disable-gpu',
       '--hide-crash-restore-bubble',
-      'https://flow.google.com/'
+      '--window-size=1280,900',
+      '--window-position=-32000,-32000',
+      '--mute-audio',
+      '--disable-features=CalculateNativeWinOcclusion',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling',
+      'about:blank'
     ], { detached: false, stdio: 'ignore' });
 
     const wsUrl = await getPageWebSocketUrl(randomPort, 20);
@@ -636,79 +708,88 @@ async function silentSyncAccountCredits(accountId = 'acc_1') {
     cdp = new RawCDPClient(wsUrl);
     await cdp.connect();
     await cdp.send('Page.enable');
-    await cdp.send('Network.enable');
 
-    let detectedCredit = '';
-
-    cdp.on('Network.responseReceived', async (params) => {
+    // Cara cepat: saat dibuka, halaman Flow sendiri memanggil API kredit (batchexecute rpcids=nzlxg)
+    // yang membalas [kredit, ..., [detik_reset, nano]]. Balasan itu ditangkap langsung → tidak perlu klik panel akun.
+    let apiInfo = null;
+    const pendingReqIds = new Set();
+    cdp.on('Network.responseReceived', (params) => {
+      if (/rpcids=[^&]*nzlxg/.test(params?.response?.url || '')) pendingReqIds.add(params.requestId);
+    });
+    cdp.on('Network.loadingFinished', async (params) => {
+      if (!pendingReqIds.has(params?.requestId) || apiInfo) return;
       try {
-        const respUrl = params.response?.url || '';
-        if (respUrl.includes('batchexecute') || respUrl.includes('credit') || respUrl.includes('workspace')) {
-          const bodyObj = await cdp.send('Network.getResponseBody', { requestId: params.requestId }).catch(() => null);
-          if (bodyObj?.body) {
-            const parsed = parseGoogleFlowCreditResponse(bodyObj.body);
-            if (parsed) detectedCredit = parsed;
-          }
-        }
+        const body = await cdp.send('Network.getResponseBody', { requestId: params.requestId });
+        apiInfo = parseFlowCreditRpc(body?.base64Encoded ? Buffer.from(body.body, 'base64').toString('utf8') : body?.body);
       } catch (e) {}
     });
+    await cdp.send('Network.enable').catch(() => {});
+    await cdp.send('Page.navigate', { url: 'https://flow.google.com/' }).catch(() => {});
+    for (let i = 0; i < 40 && !apiInfo; i++) await sleep(500);
 
-    await sleep(2500);
-
-    const headerIconPos = await cdp.findElementCenter({
-      selector: 'flow-header-user-icon, header button, header a, header img, button[aria-label*="Google"]',
-      textRegexStr: '@|Akun Google|Google Account|Profil|Kredit'
-    });
-
-    if (headerIconPos) {
-      await cdp.nativeClickAt(headerIconPos.x, headerIconPos.y, 1000);
-      await cdp.pressKey('Escape', 27);
-    }
-
-    await sleep(2000);
-
-    if (!detectedCredit) {
-      const evalRes = await cdp.send('Runtime.evaluate', {
+    const readCreditInfo = async () => {
+      const res = await cdp.send('Runtime.evaluate', {
         expression: `
           (() => {
-            const allText = document.body.innerText || '';
-
-            const m1 = allText.match(/(\\d+)\\s*(?:kredit|credits)/i);
-            if (m1) return m1[1] + ' Kredit';
-
-            const m2 = allText.match(/(\\d+)\\s*\\/\\s*\\d+\\s*(?:kredit|credits)?/i);
-            if (m2) return m2[1] + ' Kredit';
-
-            const badge = document.querySelector('[class*="credit"], [aria-label*="kredit" i], [aria-label*="credit" i]');
-            if (badge) {
-              const num = (badge.innerText || '').match(/\\d+/);
-              if (num) return num[0] + ' Kredit';
-            }
-
-            return '';
+            const txt = document.body ? (document.body.innerText || '') : '';
+            // Sumber utama: <span class="credits-count">0 kredit Google Flow</span> di panel akun
+            const countEl = document.querySelector('.credits-count');
+            const countTxt = countEl ? (countEl.textContent || '').trim() : '';
+            const m = countTxt.match(/(\\d{1,3}(?:[.,]\\d{3})+|\\d+)/) || txt.match(/(\\d{1,3}(?:[.,]\\d{3})+|\\d+)\\s*kredit\\s*Google\\s*Flow/i) || txt.match(/(\\d{1,3}(?:[.,]\\d{3})+|\\d+)\\s*Google\\s*Flow\\s*credits?/i);
+            const reset = txt.match(/diperbarui[^\\n]*?pukul\\s*(\\d{1,2})[.:](\\d{2})/i) || txt.match(/refresh[^\\n]*?at\\s*(\\d{1,2}):(\\d{2})/i);
+            const exhausted = /kredit google flow anda habis|out of google flow credits/i.test(txt);
+            return {
+              credit: m ? parseInt(m[1].replace(/[.,]/g, ''), 10) : null,
+              resetTime: reset ? reset[1].padStart(2, '0') + ':' + reset[2] : '',
+              exhausted
+            };
           })()
         `,
         returnByValue: true
       }).catch(() => null);
+      return res?.result?.value || {};
+    };
 
-      if (evalRes?.result?.value) {
-        detectedCredit = evalRes.result.value;
+    // Buka panel akun (avatar kanan atas) lalu baca teks kredit; ulangi sampai terbaca
+    let info = apiInfo ? { credit: apiInfo.credit, resetTime: apiInfo.resetTime } : {};
+    let panelClicked = false;
+    for (let attempt = 0; attempt < 12 && typeof info.credit !== 'number'; attempt++) {
+      await sleep(1500);
+      info = await readCreditInfo();
+      if (typeof info.credit === 'number') break;
+
+      if (!panelClicked || attempt % 4 === 3) {
+        // Popup sambutan akun baru bisa menutupi avatar
+        await dismissFlowOnboarding((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), () => {}, sleep);
+        // Avatar Flow (tanpa teks) → buka panel akun yang berisi "N kredit Google Flow"
+        const avatarPos = await cdp.findElementCenter({ selector: 'flow-header-user-icon [role="button"], flow-header-user-icon' })
+          || await cdp.findElementCenter({
+            selector: 'header button, header a, header img, button[aria-label*="Google"], button[aria-label*="Akun"]',
+            textRegexStr: '@|Akun Google|Google Account|Profil|Kredit'
+          });
+        if (avatarPos) {
+          await cdp.nativeClickAt(avatarPos.x, avatarPos.y, 1200);
+          panelClicked = true;
+        }
       }
     }
+
+    let creditNum = typeof info.credit === 'number' ? info.credit : null;
+    if (creditNum === null && info.exhausted) creditNum = 0;
 
     const cfg = getFlowAccountsConfigRaw();
     const acc = cfg.accounts.find((a) => a.id === accountId);
     if (acc) {
-      if (detectedCredit) {
-        acc.credits = detectedCredit;
-        acc.status = 'Sesi Aktif';
-      } else if (checkAccountHasRealSession(accountId)) {
-        acc.status = 'Sesi Aktif';
+      acc.status = 'Sesi Aktif';
+      if (creditNum !== null) {
+        acc.credits = `${creditNum} Kredit`;
+        acc.creditsCheckedAt = Date.now();
       }
+      if (info.resetTime) acc.creditResetTime = info.resetTime;
       saveFlowAccountsConfig(cfg);
     }
 
-    return detectedCredit || acc?.credits || 'Tersedia';
+    return creditNum !== null ? `${creditNum} Kredit` : null;
   } catch (err) {
     return null;
   } finally {
@@ -722,57 +803,94 @@ async function silentSyncAccountCredits(accountId = 'acc_1') {
   }
 }
 
+// Kredit dianggap usang jika belum pernah dicek, atau jam reset harian sudah lewat sejak pengecekan terakhir
+function isFlowCreditStale(acc) {
+  if (!acc || !acc.creditsCheckedAt) return true;
+  // Belum ada angka kredit (mis. baru login ulang) → wajib dicek lagi walau waktu cek terakhir masih baru
+  if (!/\d/.test(String(acc.credits || ''))) return true;
+  const [hh, mm] = String(acc.creditResetTime || '00:00').split(':').map((n) => parseInt(n, 10) || 0);
+  const lastReset = new Date();
+  lastReset.setHours(hh, mm, 0, 0);
+  if (lastReset.getTime() > Date.now()) lastReset.setDate(lastReset.getDate() - 1);
+  return acc.creditsCheckedAt < lastReset.getTime();
+}
+
+// Sinkronkan kredit semua akun yang sudah login (berurutan, satu Chrome per akun)
+let creditSyncInFlight = null;
+function syncAllFlowAccountCredits({ onlyStale = false, onProgress = () => {} } = {}) {
+  if (creditSyncInFlight) return creditSyncInFlight;
+
+  creditSyncInFlight = (async () => {
+    const cfg = getFlowAccountsConfigRaw();
+    const targets = (cfg.accounts || []).filter((acc) => checkAccountHasRealSession(acc.id) && (!onlyStale || isFlowCreditStale(acc)));
+    // Dicek 3 akun sekaligus (bukan satu per satu) agar tidak lama saat akun Flow banyak
+    const CONCURRENCY = 3;
+    let next = 0;
+    const workers = Array.from({ length: Math.min(CONCURRENCY, targets.length) }, async () => {
+      while (next < targets.length) {
+        const acc = targets[next++];
+        onProgress(`Memeriksa kredit asli ${acc.name} di Google Flow...`);
+        const credit = await silentSyncAccountCredits(acc.id);
+        onProgress(`Kredit ${acc.name}: ${credit || 'tidak terbaca (memakai data terakhir)'}`);
+      }
+    });
+    await Promise.all(workers);
+    notifyUIFlowAccountsUpdated();
+    return getFlowAccountsConfigRaw();
+  })().finally(() => {
+    creditSyncInFlight = null;
+  });
+
+  return creditSyncInFlight;
+}
+
 // =========================================================================
-// ROTASI OTOMATIS MULTI-AKUN (TANPA HAPUS AKUN - AMANKAN JATAH HARIAN)
+// HELPER ROTASI & VALIDASI SALDO MULTI-AKUN FLOW (BLOKIR JIKA TIDAK SIAP)
 // =========================================================================
-async function ensureActiveAccountWithSufficientCredits(onProgress = () => {}) {
-  const cfg = getFlowAccountsConfig();
-  if (!cfg.accounts || cfg.accounts.length === 0) {
-    throw new Error('Tidak ada akun Google Flow yang terdaftar.');
+function resolveActiveAccountForRender(onProgress = () => {}) {
+  const cfg = getFlowAccountsConfigRaw();
+  if (!cfg || !Array.isArray(cfg.accounts) || cfg.accounts.length === 0) {
+    throw new Error('Tidak ada akun Google Flow yang terdaftar di sistem.');
   }
 
-  const extractCreditNumber = (creditStr) => {
-    if (!creditStr || creditStr === 'Tidak Tersedia' || creditStr === 'Habis') return 0;
-    const match = String(creditStr).match(/\d+/);
-    return match ? parseInt(match[0], 10) : 999;
+  const getCreditNum = (acc) => {
+    if (!acc || acc.status !== 'Sesi Aktif') return 0;
+    const match = String(acc.credits || '').replace(/(\d)[.,](?=\d{3}(?!\d))/g, '$1').match(/\d+/);
+    return match ? parseInt(match[0], 10) : 0;
   };
 
-  // Cari akun yang sedang aktif
   let activeIndex = cfg.accounts.findIndex((a) => a.id === cfg.activeAccountId);
   if (activeIndex === -1) activeIndex = 0;
 
-  const totalAccounts = cfg.accounts.length;
+  const currentAcc = cfg.accounts[activeIndex];
+  const currentCredit = getCreditNum(currentAcc);
 
-  // Lakukan pengecekan berputar ke seluruh akun yang ada
-  for (let step = 0; step < totalAccounts; step++) {
-    const currentIndex = (activeIndex + step) % totalAccounts;
-    const currentAcc = cfg.accounts[currentIndex];
-
-    onProgress(`[Pengecekan Kuota] Memeriksa saldo ${currentAcc.name}...`);
-    const syncedCredits = await silentSyncAccountCredits(currentAcc.id);
-    const creditValue = extractCreditNumber(syncedCredits || currentAcc.credits);
-
-    if (creditValue >= 10) {
-      onProgress(`[Kuota Cukup] Menggunakan ${currentAcc.name} (${creditValue} Kredit).`);
-      
-      // Simpan akun ini sebagai akun aktif terpilih
-      cfg.activeAccountId = currentAcc.id;
-      currentAcc.credits = `${creditValue} Kredit`;
-      saveFlowAccountsConfig(cfg);
-
-      return currentAcc;
-    }
-
-    // Jika kredit < 10: Tandai akun 'Habis' tanpa menghapusnya
-    onProgress(`[Kredit Habis/Kurang] ${currentAcc.name} tersisa ${creditValue} Kredit (< 10).`);
-    currentAcc.credits = 'Habis';
-    saveFlowAccountsConfig(cfg);
-    onProgress(`Melewati ${currentAcc.name} (menunggu reset harian) & beralih ke akun berikutnya...`);
-    await sleep(1000);
+  // Jika akun aktif siap dan memiliki saldo minimal 10 kredit
+  if (currentAcc && currentAcc.status === 'Sesi Aktif' && currentCredit >= MIN_FLOW_CREDIT) {
+    return { targetAcc: currentAcc, cfg };
   }
 
-  // Jika seluruh akun dalam daftar tidak ada yang memiliki >= 10 kredit
-  throw new Error('Semua akun Google Flow telah kehabisan kredit (< 10). Kuota gratis 50 kredit akan reset besok.');
+  onProgress(`[Pengecekan Kuota] ${currentAcc?.name || 'Akun Aktif'} kredit < ${MIN_FLOW_CREDIT} (${currentCredit} Kredit). Mencari akun cadangan...`);
+
+  // Cari akun cadangan berikutnya yang sudah aktif login dan memiliki kredit cukup
+  const readyBackupAcc = cfg.accounts.find((acc) => {
+    return acc.id !== currentAcc?.id && acc.status === 'Sesi Aktif' && getCreditNum(acc) >= MIN_FLOW_CREDIT;
+  });
+
+  if (readyBackupAcc) {
+    onProgress(`[Rotasi Akun] Otomatis beralih ke ${readyBackupAcc.name} (${readyBackupAcc.credits}).`);
+    cfg.activeAccountId = readyBackupAcc.id;
+    saveFlowAccountsConfig(cfg);
+    return { targetAcc: readyBackupAcc, cfg };
+  }
+
+  // Cek apakah ada akun cadangan tetapi belum login
+  const pendingLoginAcc = cfg.accounts.find((acc) => acc.id !== currentAcc?.id && acc.status !== 'Sesi Aktif');
+  if (pendingLoginAcc) {
+    throw new Error(`Kredit ${currentAcc ? currentAcc.name : 'Akun Utama'} tersisa < ${MIN_FLOW_CREDIT} (${currentCredit} Kredit) dan ${pendingLoginAcc.name} belum login. Anda tidak bisa membuat video reels sebelum login ke ${pendingLoginAcc.name} di Pengaturan AI.`);
+  }
+
+  throw new Error(`Semua akun Google Flow kehabisan kredit (< ${MIN_FLOW_CREDIT}). Anda tidak dapat membuat video reels sampai kuota harian direset besok atau menambahkan akun baru.`);
 }
 
 function addFlowAccount() {
@@ -935,9 +1053,10 @@ async function runFlowProjectCreation({
   storyboardImagePath = null,
   promptText,
   flowVideoType = 'Bahan',
-  flowModel = 'Omni 1.1 Flash',
-  flowResolution = '360p',
-  flowDuration = '10 dtk',
+  flowModel = 'Veo 3.1 - Lite',
+  flowResolution = '720p',
+  flowDuration = '10 Detik',
+  flowOutputCount = '1',
   onProgress = () => {}
 }) {
   const chromePath = getOriginalChromeExecutablePath();
@@ -955,9 +1074,19 @@ async function runFlowProjectCreation({
 
   await acquireGenerateSlot(onProgress);
 
-  // 1. Pengecekan awal: Pastikan akun memiliki minimal 10 kredit; jika < 10, akun langsung dihapus dan beralih ke akun berikutnya
-  const targetAcc = await ensureActiveAccountWithSufficientCredits(onProgress);
-  const accountId = targetAcc?.id || 'acc_1';
+  // 1. Validasi saldo & rotasi otomatis ke Akun 2 (atau tolak jika belum siap)
+  let targetAcc = null;
+  let cfg = null;
+  try {
+    const resolved = resolveActiveAccountForRender(onProgress);
+    targetAcc = resolved.targetAcc;
+    cfg = resolved.cfg;
+  } catch (accErr) {
+    await releaseGenerateSlot(onProgress);
+    return { success: false, error: accErr.message };
+  }
+
+  const accountId = targetAcc.id;
   const profileDir = getProfileDirForAccount(accountId);
 
   const cdpPort = 51000 + Math.floor(Math.random() * 13000);
@@ -966,7 +1095,7 @@ async function runFlowProjectCreation({
 
   try {
     purgeTransientSessionData(profileDir);
-    onProgress(`Menggunakan sesi Flow (${targetAcc.name}) · Port CDP ${cdpPort}...`);
+    onProgress(`Menggunakan sesi Flow (${targetAcc.name} · Port CDP: ${cdpPort})...`);
 
     chromeProcess = spawn(
       chromePath,
@@ -984,7 +1113,6 @@ async function runFlowProjectCreation({
     await cdp.send('Network.enable');
 
     const interceptedVideoUrls = [];
-    let liveCreditsDetected = null;
 
     cdp.on('Network.responseReceived', async (params) => {
       try {
@@ -996,7 +1124,6 @@ async function runFlowProjectCreation({
           if (bodyObj?.body) {
             const cred = parseGoogleFlowCreditResponse(bodyObj.body);
             if (cred) {
-              liveCreditsDetected = cred;
               targetAcc.credits = cred;
               const cfgNow = getFlowAccountsConfigRaw();
               const matchedAcc = cfgNow.accounts.find((a) => a.id === targetAcc.id);
@@ -1023,70 +1150,27 @@ async function runFlowProjectCreation({
       } catch (e) {}
     });
 
+    await dismissFlowOnboarding((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
     onProgress(`Memvalidasi akun dan sisa kredit di antarmuka Flow...`);
-    await sleep(4000);
+    await sleep(3500);
 
     const headerIconPos = await cdp.waitForElementCenter({
       selector: 'flow-header-user-icon, header button, header a, header img',
       textRegexStr: '@|Akun Google|Google Account|Profil',
       pickLast: true
-    }, 8000);
+    }, 7000);
 
     if (headerIconPos) {
-      await cdp.nativeClickAt(headerIconPos.x, headerIconPos.y, 1200);
+      await cdp.nativeClickAt(headerIconPos.x, headerIconPos.y, 1000);
       await cdp.pressKey('Escape', 27);
-      await humanDelay(600, 900);
-    }
-
-    // Pengecekan kedua secara live langsung dari halaman: jika terdeteksi < 10 kredit, batalkan dan hapus akun
-    const directCreditCheck = await cdp.send('Runtime.evaluate', {
-      expression: `
-        (() => {
-          const allText = document.body.innerText || '';
-          const m = allText.match(/(\\d+)\\s*(?:kredit|credits)/i);
-          if (m) return parseInt(m[1], 10);
-          const badge = document.querySelector('[class*="credit"], [aria-label*="kredit" i], [aria-label*="credit" i]');
-          if (badge) {
-            const num = (badge.innerText || '').match(/\\d+/);
-            if (num) return parseInt(num[0], 10);
-          }
-          return null;
-        })()
-      `,
-      returnByValue: true
-    }).catch(() => null);
-
-    const liveCreditVal = directCreditCheck?.result?.value;
-    if (liveCreditVal !== null && typeof liveCreditVal === 'number' && liveCreditVal < 10) {
-      onProgress(`[PERINGATAN] Saldo aktual ${targetAcc.name} hanya ${liveCreditVal} Kredit (< 10).`);
-      onProgress(`Menghapus ${targetAcc.name} dan beralih ke akun berikutnya...`);
-
-      try { await cdp.send('Browser.close'); } catch (e) {}
-      cdp.close();
-      if (chromeProcess && !chromeProcess.killed) {
-        try { chromeProcess.kill(); } catch (e) {}
-      }
-
-      deleteFlowAccount(targetAcc.id);
-      await releaseGenerateSlot(onProgress);
-
-      // Jalankan kembali otomatis dengan akun cadangan berikutnya
-      return await runFlowProjectCreation({
-        projectFolder,
-        storyboardImagePath,
-        promptText,
-        flowVideoType,
-        flowModel,
-        flowResolution,
-        flowDuration,
-        onProgress
-      });
+      await humanDelay(500, 800);
     }
 
     onProgress(`Mencari dan menekan tombol "+ Project baru"...`);
     let enteredWorkspace = false;
 
     for (let attempt = 1; attempt <= 5; attempt++) {
+      await dismissFlowOnboarding((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
       const isAlreadyInProject = await cdp.findElementCenter({
         selector: 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]'
       });
@@ -1109,6 +1193,10 @@ async function runFlowProjectCreation({
       }
     }
 
+    // Popup info fitur baru di project (mis. "Nano Banana 2.1" → Mulai)
+    await dismissFlowOnboarding((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
+    await disableFlowAgent((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
+
     if (!enteredWorkspace) {
       const checkEditorAgain = await cdp.waitForElementCenter({
         selector: 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]'
@@ -1119,63 +1207,69 @@ async function runFlowProjectCreation({
     }
 
     const cleanType = String(flowVideoType).toLowerCase().includes('frame') ? 'Frame' : 'Bahan';
-    const cleanRes = String(flowResolution).includes('360') ? '360p' : (String(flowResolution).includes('720') ? '720p' : '360p');
-    const durationMatch = String(flowDuration).match(/\d+/);
-    const cleanDuration = durationMatch ? `${durationMatch[0]} dtk` : '10 dtk';
-    const cleanModel = String(flowModel || 'Omni 1.1 Flash').replace(/google/i, '').trim();
+    const cleanRes = String(flowResolution).includes('360') ? '360p' : '720p';
+    const durMatch = String(flowDuration).match(/\d+/);
+    const cleanDurationVal = durMatch ? durMatch[0] : '8';
+    const cleanModel = String(flowModel || 'Veo 3.1 - Lite').replace(/google/i, '').trim();
+    const cleanOutputCount = String(flowOutputCount).match(/\d+/) ? `x${String(flowOutputCount).match(/\d+/)[0]}` : 'x1';
 
-    onProgress(`Membuka panel setelan untuk mengubah mode ke Video (${cleanModel} · ${cleanRes} · ${cleanDuration})...`);
+    onProgress(`Mengatur setelan mesin render (${cleanModel} · ${cleanRes} · ${cleanDurationVal} dtk · ${cleanOutputCount})...`);
 
+    // Deteksi pill setelan bawah (contoh: "Video · 720p · 8 dtk · 9:16 · x2")
     const pillPos = await cdp.waitForElementCenter({
       selector: 'button[aria-label="Pemicu setelan"], button.settings-trigger-button, button',
-      textRegexStr: 'Nano Banana|Imagen|Veo|Omni|Video\\s*[·•]|Gambar\\s*[·•]|x[1-4]',
-      minY: 500,
+      textRegexStr: 'Nano Banana|Imagen|Veo|Omni|Video\\s*[·•]|Gambar\\s*[·•]|x[1-4]|dtk',
+      minY: 480,
       pickLast: true
     }, 10000);
 
     if (pillPos) {
       await cdp.nativeClickAt(pillPos.x, pillPos.y, 750);
 
-      onProgress(`Mengubah mode dari Gambar ke Video...`);
+      // 1. Pilih Tab Video
       const videoTabPos = await cdp.findElementCenter({
         selector: 'mat-button-toggle, button, [role="tab"], [role="radio"], span',
         textRegexStr: '^\\s*Video\\s*$',
-        minY: 180,
-        maxY: 780
+        minY: 150,
+        maxY: 850
       });
       if (videoTabPos) {
-        await cdp.nativeClickAt(videoTabPos.x, videoTabPos.y, 650);
+        await cdp.nativeClickAt(videoTabPos.x, videoTabPos.y, 600);
       }
 
+      // 2. Pilih Jenis: Bahan / Frame
       const typePos = await cdp.findElementCenter({
         selector: 'mat-button-toggle, button, [role="radio"], span',
         textRegexStr: `^\\s*${cleanType}\\s*$`,
-        minY: 180,
-        maxY: 780
+        minY: 150,
+        maxY: 850
       });
       if (typePos) {
-        await cdp.nativeClickAt(typePos.x, typePos.y, 550);
+        await cdp.nativeClickAt(typePos.x, typePos.y, 500);
       }
 
+      // 3. Pilih Rasio
+      const cleanRatio = String(flowRatio || '9:16').replace(/\s+/g, '');
       const ratioPos = await cdp.findElementCenter({
         selector: 'mat-button-toggle, button, [role="radio"], span',
-        textRegexStr: '^\\s*9:16\\s*$',
-        minY: 180,
-        maxY: 780
+        textRegexStr: `^\\s*${cleanRatio.replace(':', '\\s*:\\s*')}\\s*$`,
+        minY: 150,
+        maxY: 850
       });
       if (ratioPos) {
-        await cdp.nativeClickAt(ratioPos.x, ratioPos.y, 550);
+        await cdp.nativeClickAt(ratioPos.x, ratioPos.y, 500);
       }
 
+      // 4. Pilih Model Veo / Omni
       const modelDropdownTrigger = await cdp.findElementCenter({
         selector: 'button[aria-label="Pilih rangkaian model"], .flow-model-picker-trigger, button',
-        textRegexStr: 'Omni|Veo|Nano Banana|Model',
-        minY: 220,
-        maxY: 780
+        textRegexStr: 'Veo|Omni|Model|Nano Banana',
+        minY: 180,
+        maxY: 850
       });
 
       if (modelDropdownTrigger) {
-        await cdp.nativeClickAt(modelDropdownTrigger.x, modelDropdownTrigger.y, 650);
+        await cdp.nativeClickAt(modelDropdownTrigger.x, modelDropdownTrigger.y, 600);
 
         const targetModelOption = await cdp.findElementCenter({
           selector: '.mat-mdc-menu-panel button, [role="menuitem"], [role="option"], flow-menu-item, span',
@@ -1184,49 +1278,56 @@ async function runFlowProjectCreation({
 
         if (targetModelOption) {
           onProgress(`Memilih model: ${cleanModel}...`);
-          await cdp.nativeClickAt(targetModelOption.x, targetModelOption.y, 600);
+          await cdp.nativeClickAt(targetModelOption.x, targetModelOption.y, 550);
         } else {
           await cdp.pressKey('Escape', 27);
-          await sleep(400);
+          await sleep(350);
         }
       }
 
+      // 5. Pilih Resolusi (720p / 360p)
       const resPos = await cdp.findElementCenter({
         selector: 'mat-button-toggle, button, [role="radio"], span',
         textRegexStr: cleanRes,
-        minY: 220,
-        maxY: 780
+        minY: 180,
+        maxY: 850
       });
       if (resPos) {
         onProgress(`Memilih resolusi: ${cleanRes}...`);
-        await cdp.nativeClickAt(resPos.x, resPos.y, 550);
+        await cdp.nativeClickAt(resPos.x, resPos.y, 500);
       }
 
+      // 6. Pilih Durasi
+      const cleanDurRegex = `^\\s*${cleanDurationVal}\\s*(?:dtk|detik|s)?\\s*$`;
       const durPos = await cdp.findElementCenter({
         selector: 'mat-button-toggle, button, [role="radio"], span',
-        textRegexStr: `^\\s*${cleanDuration}\\s*$`,
-        minY: 220,
-        maxY: 780
+        textRegexStr: cleanDurRegex,
+        minY: 180,
+        maxY: 850
       });
       if (durPos) {
-        await cdp.nativeClickAt(durPos.x, durPos.y, 550);
+        onProgress(`Memilih durasi: ${cleanDurationVal} Detik...`);
+        await cdp.nativeClickAt(durPos.x, durPos.y, 500);
       }
 
-      const x1Pos = await cdp.findElementCenter({
-        selector: 'mat-button-toggle, button, [role="radio"], span',
-        textRegexStr: '^\\s*x1\\s*$',
-        minY: 220,
-        maxY: 780
+      // 7. PAKSA KLIK OUTPUT x1 (HEMAT KREDIT - 10 KREDIT SAJA)
+      onProgress(`Memastikan jumlah output diatur ke ${cleanOutputCount} (1 Video)...`);
+      const targetCountBtnPos = await cdp.findElementCenter({
+        selector: 'mat-button-toggle, button, [role="radio"], span, div',
+        textRegexStr: `^\\s*${cleanOutputCount}\\s*$`,
+        minY: 180,
+        maxY: 850
       });
-      if (x1Pos) {
-        await cdp.nativeClickAt(x1Pos.x, x1Pos.y, 550);
+
+      if (targetCountBtnPos) {
+        await cdp.nativeClickAt(targetCountBtnPos.x, targetCountBtnPos.y, 500);
       }
 
       await cdp.pressKey('Escape', 27);
-      await humanDelay(600, 900);
+      await humanDelay(500, 800);
     }
 
-    onProgress(`Menempelkan gambar storyboard ke kotak prompt: ${path.basename(targetStoryboardFile)}...`);
+    onProgress(`Menempelkan gambar storyboard: ${path.basename(targetStoryboardFile)}...`);
     const editorPos = await cdp.waitForElementCenter({
       selector: 'flow-rich-text-editor .ProseMirror, div.ProseMirror[contenteditable="true"]'
     }, 15000);
@@ -1239,6 +1340,9 @@ async function runFlowProjectCreation({
 
     await cdp.nativeClickAt(editorPos.x, editorPos.y, 550);
     await cdp.sendCtrlV();
+    // Dialog "Hak untuk menggunakan gambar ini" bisa muncul setelah tempel gambar
+    await sleep(1500);
+    await agreeFlowImageRights(cdp, onProgress, sleep);
     await sleep(3000);
 
     const hasUploadedOrLoading = await cdp.findElementCenter({
@@ -1246,13 +1350,13 @@ async function runFlowProjectCreation({
     });
 
     if (!hasUploadedOrLoading) {
-      onProgress(`Mengunggah gambar melalui input file native...`);
+      onProgress(`Mengunggah gambar via input native...`);
       await cdp.setNativeFileInput(targetStoryboardFile);
       await sleep(3500);
     }
 
-    onProgress(`Menunggu gambar selesai diunggah ke Google Flow...`);
-    await sleep(4000);
+    onProgress(`Menunggu gambar selesai diunggah...`);
+    await sleep(3500);
 
     for (let w = 0; w < 35; w++) {
       const loadingPos = await cdp.findElementCenter({ selector: '.loading-percentage, flow-soupy-overlay' });
@@ -1273,15 +1377,15 @@ async function runFlowProjectCreation({
       }) || editorPos;
 
       if (galleryTileImg && currentEditorPos) {
-        onProgress(`Menyematkan gambar ke referensi kotak prompt...`);
+        onProgress(`Menyematkan gambar ke kotak prompt...`);
         await cdp.nativeDragAndDrop(galleryTileImg.x, galleryTileImg.y, currentEditorPos.x, currentEditorPos.y);
       }
     }
 
-    await humanDelay(600, 900);
+    await humanDelay(500, 800);
 
     const cleanPrompt = finalPromptText.replace(/\r\n/g, ' ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-    onProgress(`Menempelkan (Copy-Paste) teks Video Prompt...`);
+    onProgress(`Menempelkan teks Prompt Video...`);
 
     clipboard.writeText(cleanPrompt);
     await sleep(250);
@@ -1292,7 +1396,10 @@ async function runFlowProjectCreation({
 
     await cdp.nativeClickAt(updatedEditorPos.x, updatedEditorPos.y, 450);
     await cdp.sendCtrlV();
-    await humanDelay(1500, 2200);
+    // Dialog "Hak untuk menggunakan gambar ini" bisa muncul setelah tempel gambar
+    await sleep(1500);
+    await agreeFlowImageRights(cdp, onProgress, sleep);
+    await humanDelay(1200, 1800);
 
     interceptedVideoUrls.length = 0;
 
@@ -1309,7 +1416,7 @@ async function runFlowProjectCreation({
       await cdp.pressKey('Enter', 13);
     }
 
-    onProgress(`Perintah terkirim! Menunggu proses render video...`);
+    onProgress(`Perintah terkirim! Menunggu render video selesai...`);
     await sleep(8000);
 
     const maxWaitMs = 15 * 60 * 1000;
@@ -1332,11 +1439,10 @@ async function runFlowProjectCreation({
             };
 
             const bodyTxt = document.body.innerText || '';
-            if (bodyTxt.includes('aktivitas yang tidak biasa') || bodyTxt.includes('unusual activity')) {
+            if (/aktivitas\\s+(yang\\s+)?tidak\\s+biasa|unusual\\s+activity/i.test(bodyTxt)) {
               return { status: 'unusual' };
             }
 
-            // Deteksi peringatan kehabisan kredit saat proses berjalan
             if (bodyTxt.includes('insufficient credits') || bodyTxt.includes('kredit tidak cukup') || bodyTxt.includes('kredit habis')) {
               return { status: 'out_of_credits' };
             }
@@ -1371,43 +1477,29 @@ async function runFlowProjectCreation({
 
       if (state?.status === 'out_of_credits') {
         onProgress(`[PERINGATAN] Kredit ${targetAcc.name} habis saat proses berlangsung!`);
-        onProgress(`Menyimpan sesi akun untuk jatah besok dan beralih ke akun cadangan...`);
-
         try { await cdp.send('Browser.close'); } catch (e) {}
         cdp.close();
         if (chromeProcess && !chromeProcess.killed) {
           try { chromeProcess.kill(); } catch (e) {}
         }
 
-        // Tandai habis di konfigurasi tanpa menghapus profil
         const cfgNow = getFlowAccountsConfigRaw();
         const matched = cfgNow.accounts.find(a => a.id === targetAcc.id);
         if (matched) matched.credits = 'Habis';
         saveFlowAccountsConfig(cfgNow);
 
         await releaseGenerateSlot(onProgress);
-
-        // Jalankan ulang pipeline dengan akun berikutnya
-        return await runFlowProjectCreationTiktok({
-          projectFolder,
-          storyboardImagePath,
-          promptText,
-          flowVideoType,
-          flowModel,
-          flowResolution,
-          flowDuration,
-          onProgress
-        });
+        throw new Error(`Kredit ${targetAcc.name} telah habis.`);
       }
 
       if (state?.status === 'unusual') {
-        throw new Error('Akun terkena pembatasan "aktivitas tidak biasa". Coba gunakan akun Google yang sudah pernah dipakai manual.');
+        throw new Error('Akun terindikasi pembatasan aktivitas.');
       }
 
-      if ((state?.status === 'done' || interceptedVideoUrls.length > 0) && elapsedSec >= 18) {
+      if ((state?.status === 'done' || interceptedVideoUrls.length > 0) && elapsedSec >= 15) {
         isRenderCompleted = true;
         detectedVideoSrc = state?.src || interceptedVideoUrls[0] || '';
-        onProgress(`Video selesai dirender (${elapsedSec} dtk)! Menyiapkan pengunduhan...`);
+        onProgress(`Video selesai dirender (${elapsedSec} dtk)! Mengunduh berkas video...`);
         await sleep(2500);
         break;
       }
@@ -1434,7 +1526,6 @@ async function runFlowProjectCreation({
       eventsEnabled: true
     }).catch(() => {});
 
-    onProgress(`Membuka pratinjau video hasil render...`);
     let videoCardPos = await cdp.findElementCenter({
       selector: 'flow-video-tile, video',
       minY: 100,
@@ -1476,7 +1567,7 @@ async function runFlowProjectCreation({
 
     let isSavedSuccess = false;
 
-    // Strategi 1: Direct URL Download via intercepted network URLs
+    // Strategi 1: Direct URL Download
     const candidateHttpUrls = [
       ...(detectedVideoSrc && detectedVideoSrc.startsWith('http') ? [detectedVideoSrc] : []),
       ...interceptedVideoUrls
@@ -1485,17 +1576,15 @@ async function runFlowProjectCreation({
     for (const directUrl of candidateHttpUrls) {
       if (isSavedSuccess) break;
       try {
-        onProgress(`Mengunduh stream video langsung dari URL...`);
         await downloadFileFromUrl(directUrl, sessionVideoPath);
-        if (fs.existsSync(sessionVideoPath) && fs.statSync(sessionVideoPath).size > 20000) {
+        if (fs.existsSync(sessionVideoPath) && fs.statSync(sessionVideoPath).size > 50000) {
           isSavedSuccess = true;
-          onProgress(`Video berhasil diunduh langsung (${Math.round(fs.statSync(sessionVideoPath).size / 1024)} KB)!`);
           break;
         }
       } catch (e) {}
     }
 
-    // Strategi 2: Klik Tombol Unduh UI Fisik
+    // Strategi 2: Tombol Unduh UI
     if (!isSavedSuccess) {
       const dlBtnPos = await cdp.findElementCenter({
         selector: 'button, [role="button"], a[download]',
@@ -1504,7 +1593,6 @@ async function runFlowProjectCreation({
       });
 
       if (dlBtnPos) {
-        onProgress(`Menekan tombol Unduh di Google Flow...`);
         await cdp.nativeClickAt(dlBtnPos.x, dlBtnPos.y, 1200);
 
         const priorityRes = cleanRes === '720p' ? ['720p', '1080p', '360p'] : ['360p', '720p'];
@@ -1514,7 +1602,6 @@ async function runFlowProjectCreation({
             textRegexStr: rLabel
           });
           if (resMenuPos) {
-            onProgress(`Memilih resolusi unduhan (${rLabel})...`);
             await cdp.nativeClickAt(resMenuPos.x, resMenuPos.y, 1500);
             break;
           }
@@ -1530,41 +1617,29 @@ async function runFlowProjectCreation({
             );
             if (dlFiles.length > 0 && !isDownloading) {
               const downloadedFullPath = path.join(tempDownloadDir, dlFiles[0]);
-              if (fs.statSync(downloadedFullPath).size > 20000) {
+              if (fs.statSync(downloadedFullPath).size > 50000) {
                 fs.copyFileSync(downloadedFullPath, sessionVideoPath);
                 isSavedSuccess = true;
-                onProgress(`Video berhasil diunduh via menu Unduh!`);
                 break;
               }
             }
-          }
-          if (interceptedVideoUrls.length > 0) {
-            try {
-              await downloadFileFromUrl(interceptedVideoUrls[0], sessionVideoPath);
-              if (fs.existsSync(sessionVideoPath) && fs.statSync(sessionVideoPath).size > 20000) {
-                isSavedSuccess = true;
-                onProgress(`Video berhasil diunduh dari stream unduhan!`);
-                break;
-              }
-            } catch (e) {}
           }
         }
       }
     }
 
-    // Strategi 3: Fetch Blob Memory / Base64 Langsung dari Pemutar Video
+    // Strategi 3: Fetch Blob Memory / Base64
     if (!isSavedSuccess) {
-      onProgress(`Mengekstrak biner video dari buffer pemutar browser...`);
       const base64VideoRes = await cdp.send('Runtime.evaluate', {
         expression: `
           (async () => {
             try {
               const vids = Array.from(document.querySelectorAll('video'));
               const targetVid = vids.find(v => v.currentSrc || v.src || v.querySelector('source')) || vids[0];
-              if (!targetVid) return { error: 'Elemen <video> tidak ditemukan.' };
+              if (!targetVid) return { error: 'Elemen video tidak ditemukan' };
 
               const url = targetVid.currentSrc || targetVid.src || (targetVid.querySelector('source') ? targetVid.querySelector('source').src : '');
-              if (!url) return { error: 'URL sumber video kosong.' };
+              if (!url) return { error: 'URL kosong' };
 
               let response = null;
               try {
@@ -1573,7 +1648,7 @@ async function runFlowProjectCreation({
                 response = await fetch(url, { credentials: 'include' });
               }
 
-              if (!response || !response.ok) return { error: 'HTTP ' + (response ? response.status : 'Failed'), url };
+              if (!response || !response.ok) return { error: 'HTTP Failed', url };
 
               const blob = await response.blob();
               return await new Promise((resolve) => {
@@ -1582,7 +1657,7 @@ async function runFlowProjectCreation({
                   const base64 = String(reader.result || '').split(',')[1] || '';
                   resolve({ base64, url });
                 };
-                reader.onerror = () => resolve({ error: 'Gagal membaca FileReader.', url });
+                reader.onerror = () => resolve({ error: 'Gagal FileReader', url });
                 reader.readAsDataURL(blob);
               });
             } catch (err) {
@@ -1599,14 +1674,6 @@ async function runFlowProjectCreation({
         const videoBuffer = Buffer.from(extracted.base64, 'base64');
         fs.writeFileSync(sessionVideoPath, videoBuffer);
         isSavedSuccess = true;
-        onProgress(`Video berhasil diekstrak dari pemutar (${Math.round(videoBuffer.length / 1024)} KB)!`);
-      } else if (extracted?.url && extracted.url.startsWith('http')) {
-        try {
-          await downloadFileFromUrl(extracted.url, sessionVideoPath);
-          if (fs.existsSync(sessionVideoPath) && fs.statSync(sessionVideoPath).size > 20000) {
-            isSavedSuccess = true;
-          }
-        } catch (e) {}
       }
     }
 
@@ -1614,8 +1681,9 @@ async function runFlowProjectCreation({
       if (fs.existsSync(tempDownloadDir)) fs.rmSync(tempDownloadDir, { recursive: true, force: true });
     } catch (e) {}
 
-    if (!isSavedSuccess || !fs.existsSync(sessionVideoPath) || fs.statSync(sessionVideoPath).size < 20000) {
-      throw new Error('Gagal mengunduh berkas video jadi dari Google Flow.');
+    // VERIFIKASI KETAT
+    if (!isSavedSuccess || !fs.existsSync(sessionVideoPath) || fs.statSync(sessionVideoPath).size < 50000) {
+      throw new Error('Gagal mengunduh berkas video jadi dari Google Flow (file kosong/belum selesai).');
     }
 
     try {
@@ -1630,7 +1698,33 @@ async function runFlowProjectCreation({
       targetStoryboardFile
     );
 
-    onProgress(`Profil difinalisasi & video tersimpan: ${videoFileName}`);
+    // =======================================================================
+    // AUTO-DECREMENT KREDIT LOKAL (-10 KREDIT) & UPDATE UI INSTAN
+    // =======================================================================
+    try {
+      const cfgNow = getFlowAccountsConfigRaw();
+      const currentAcc = cfgNow.accounts.find((a) => a.id === targetAcc.id);
+      if (currentAcc) {
+        const numMatch = String(currentAcc.credits).replace(/(\d)[.,](?=\d{3}(?!\d))/g, '$1').match(/\d+/);
+        const currentNum = numMatch ? parseInt(numMatch[0], 10) : 50;
+        const newCreditValue = Math.max(0, currentNum - 10);
+        currentAcc.credits = newCreditValue === 0 ? 'Habis' : `${newCreditValue} Kredit`;
+
+        // Jika setelah render saldo akun ini < 10, otomatis pindahkan activeAccountId ke akun cadangan berikutnya yang siap
+        if (newCreditValue < MIN_FLOW_CREDIT) {
+          const nextReady = cfgNow.accounts.find((a) => a.id !== currentAcc.id && a.status === 'Sesi Aktif');
+          if (nextReady) {
+            cfgNow.activeAccountId = nextReady.id;
+            onProgress(`[Rotasi Otomatis] Saldo ${currentAcc.name} tersisa ${newCreditValue} Kredit. Akun aktif dialihkan ke ${nextReady.name}.`);
+          }
+        }
+
+        saveFlowAccountsConfig(cfgNow);
+        onProgress(`[Kredit Terpotong] Saldo ${currentAcc.name} tersisa ${currentAcc.credits}.`);
+      }
+    } catch (errDec) {}
+
+    onProgress(`Video tersimpan: ${videoFileName}`);
     try {
       await cdp.send('Browser.close');
     } catch (e) {}
@@ -1676,5 +1770,7 @@ module.exports = {
   openFlowWorker2LoginWindow,
   runFlowProjectCreation,
   silentSyncAccountCredits,
-  ensureActiveAccountWithSufficientCredits
+  syncAllFlowAccountCredits,
+  isFlowCreditStale,
+  resolveActiveAccountForRender
 };

@@ -486,3 +486,22 @@ core
 *.log_x_forwarded_port
 *.logxforwarded_port
 
+
+# Hasil pack worker upload server
+dist-worker/
+server/upload-worker/data/
+upload-worker.zip
+
+# Hasil bundel template Remotion (dibuat ulang saat npm run dist)
+remotion-bundle/
+remotion_bundle/
+contoh_remotion/
+contoh_3dkartun/
+contoh_3dkartun_x/
+contoh_3dkartun.zip
+update_3dkartun.zip
+update_3dkartun_x/
+update_carakerja.zip
+update_carakerja_x/
+storage/tts_cache/
+backup/

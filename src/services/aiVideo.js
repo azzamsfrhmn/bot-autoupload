@@ -1,10 +1,11 @@
 /**
  * src/services/aiVideo.js
  * Runner Otomasi Pembuatan Storyboard ChatGPT & Render Google Flow TikTok / Instagram
- * Mendukung Konsep: Jedag-Jedug (JJ) & Daster/Homewear Try-On
+ * Menggunakan Profil Bersama (Single Login Shared)
  */
 
 const { chromium } = require('playwright');
+const { startPluginChat } = require('./chatgptPlugin');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -13,10 +14,10 @@ const https = require('https');
 const http = require('http');
 const { clipboard, nativeImage, shell } = require('electron');
 
-// Runner Otomasi Google Flow TikTok (3 Foto Candid 1K + 1 Video Motion)
 const { runFlowProjectCreationTiktok } = require('./flowVideoRunnerTiktok');
-// Runner Otomasi CapCut Web (JJ)
 const { runCapCutTemplatePipeline } = require('./capcutWebRunner');
+// Jeda, batas tunggu & flag Chrome menyesuaikan spek perangkat (Mode Perangkat Ringan)
+const { scaleMs, chromeLiteArgs } = require('../core/perfProfile');
 
 const ROOT_DIR = process.cwd();
 const TEMP_DIR = path.resolve(ROOT_DIR, 'temp');
@@ -25,14 +26,15 @@ const STORYBOARD_META_JSON = path.resolve(STORYBOARD_DIR, 'metadata.json');
 const VIDEOS_DIR = path.resolve(ROOT_DIR, 'storage/videos');
 const BAHAN_VIDEO_DIR = path.resolve(ROOT_DIR, 'storage/bahan_video');
 const STORAGE_IMG_DIR = path.resolve(ROOT_DIR, 'storage/images');
-const DEFAULT_USER_DATA_DIR = path.resolve(ROOT_DIR, 'sessions/chatgpt_video_profile');
+// Menggunakan direktori profil yang persis sama dengan aiImage & aiConfigIpc
+const CHATGPT_SHARED_PROFILE = path.resolve(ROOT_DIR, 'sessions/chatgpt_profile_shared');
 
-[TEMP_DIR, STORYBOARD_DIR, VIDEOS_DIR, BAHAN_VIDEO_DIR, STORAGE_IMG_DIR, DEFAULT_USER_DATA_DIR].forEach((dir) => {
+[TEMP_DIR, STORYBOARD_DIR, VIDEOS_DIR, BAHAN_VIDEO_DIR, STORAGE_IMG_DIR, CHATGPT_SHARED_PROFILE].forEach((dir) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }
 
 async function downloadToLocalFile(url, destPath) {
@@ -84,6 +86,7 @@ function getOriginalChromeExecutablePath() {
 }
 
 async function waitForChromeReady(port, maxRetries = 25, delay = 400) {
+  maxRetries = scaleMs(maxRetries);
   for (let i = 0; i < maxRetries; i++) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`);
@@ -95,19 +98,17 @@ async function waitForChromeReady(port, maxRetries = 25, delay = 400) {
   return false;
 }
 
-function ensureWorkerVideoProfileInitialized(targetWorkerDir) {
-  if (!fs.existsSync(targetWorkerDir)) {
-    fs.mkdirSync(targetWorkerDir, { recursive: true });
-  }
-  const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+function purgeLocks(targetDir) {
+  if (!fs.existsSync(targetDir)) return;
+  const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'];
   lockFiles.forEach((f) => {
-    const p = path.join(targetWorkerDir, f);
+    const p = path.join(targetDir, f);
     if (fs.existsSync(p)) {
       try { fs.unlinkSync(p); } catch (e) {}
     }
   });
 
-  const defaultDir = path.join(targetWorkerDir, 'Default');
+  const defaultDir = path.join(targetDir, 'Default');
   const sessionItems = ['Sessions', 'Current Session', 'Current Tabs', 'Last Session', 'Last Tabs'];
   sessionItems.forEach((item) => {
     const target = path.join(defaultDir, item);
@@ -122,21 +123,6 @@ function ensureWorkerVideoProfileInitialized(targetWorkerDir) {
       } catch (e) {}
     }
   });
-
-  const prefPath = path.join(defaultDir, 'Preferences');
-  if (fs.existsSync(prefPath)) {
-    try {
-      const content = fs.readFileSync(prefPath, 'utf-8');
-      const json = JSON.parse(content);
-      if (json.profile) {
-        json.profile.exit_type = 'Normal';
-        json.profile.exited_cleanly = true;
-      }
-      if (!json.session) json.session = {};
-      json.session.restore_on_startup = 5;
-      fs.writeFileSync(prefPath, JSON.stringify(json));
-    } catch (e) {}
-  }
 }
 
 const STOP_BTN_SELECTOR = [
@@ -238,6 +224,7 @@ async function fillAndSendChat(page, text) {
 }
 
 async function waitForSmartBotResponse(page, timeoutMs = 180000) {
+  timeoutMs = scaleMs(timeoutMs);
   const assistantMsgSelector = 'div[data-message-author-role="assistant"], article[data-testid^="conversation-turn"]';
   const prevCount = await page.locator(assistantMsgSelector).count();
 
@@ -393,23 +380,6 @@ function formatTiktokPrompts(rawText, concept = 'jj') {
   if (vidMatch && vidMatch[1]) videoPrompt = vidMatch[1].trim();
   if (jjMatch && jjMatch[0]) panduan = jjMatch[0].trim();
 
-  if (!videoPrompt) {
-    const tmVid = cleanRaw.match(/\d{2}:\d{2}[–-]\d{2}:\d{2}\s*(?:VIDEO\s*(?:FLOW|PROMPT))[\s:—–-]*([\s\S]*?)(?=\d{2}:\d{2}|$)/i);
-    if (tmVid && tmVid[1]) videoPrompt = tmVid[1].trim();
-  }
-  if (!photo1) {
-    const tmP1 = cleanRaw.match(/\d{2}:\d{2}(?:\.\d+)?[–-]\d{2}:\d{2}(?:\.\d+)?\s*(?:PHOTO\s*1)[\s:—–-]*([\s\S]*?)(?=\d{2}:\d{2}|$)/i);
-    if (tmP1 && tmP1[1]) photo1 = tmP1[1].trim();
-  }
-  if (!photo2) {
-    const tmP2 = cleanRaw.match(/\d{2}:\d{2}(?:\.\d+)?[–-]\d{2}:\d{2}(?:\.\d+)?\s*(?:PHOTO\s*2)[\s:—–-]*([\s\S]*?)(?=\d{2}:\d{2}|$)/i);
-    if (tmP2 && tmP2[1]) photo2 = tmP2[1].trim();
-  }
-  if (!photo3) {
-    const tmP3 = cleanRaw.match(/\d{2}:\d{2}(?:\.\d+)?[–-]\d{2}:\d{2}(?:\.\d+)?\s*(?:PHOTO\s*3)[\s:—–-]*([\s\S]*?)(?=(?:Pengaturan|HASIL|PANDUAN|\d{2}:\d{2}|$))/i);
-    if (tmP3 && tmP3[1]) photo3 = tmP3[1].trim();
-  }
-
   const isDaster = concept === 'daster';
 
   const defaultP1 = isDaster
@@ -476,18 +446,16 @@ async function runTikTokVideoPipeline({
   flowModel = 'Veo 3.1 - Lite',
   flowResolution = '720p',
   flowDuration = '8 Detik',
-  workerId = 1,
   onProgress = () => {}
 }) {
   let browser = null;
   let chromeProcess = null;
-  const currentWorkerId = Number(workerId || 1);
   const isDasterConcept = String(concept || '').toLowerCase() === 'daster';
   const isJJConcept = !isDasterConcept || String(concept || '').toLowerCase() === 'jj';
 
   try {
     const timestamp = Date.now();
-    const currentProjectDir = path.join(BAHAN_VIDEO_DIR, `proyek_tiktok_${timestamp}_w${currentWorkerId}`);
+    const currentProjectDir = path.join(BAHAN_VIDEO_DIR, `proyek_tiktok_${timestamp}`);
     if (!fs.existsSync(currentProjectDir)) fs.mkdirSync(currentProjectDir, { recursive: true });
 
     let localProductBannerPath = '';
@@ -510,21 +478,18 @@ async function runTikTokVideoPipeline({
       throw new Error('Foto referensi suasana belum dipilih.');
     }
 
-    const targetUserDataDir = currentWorkerId === 1
-      ? DEFAULT_USER_DATA_DIR
-      : path.resolve(ROOT_DIR, `sessions/chatgpt_video_profile_worker_${currentWorkerId}`);
+    // Menggunakan direktori profil ChatGPT bersama
+    const targetUserDataDir = CHATGPT_SHARED_PROFILE;
+    purgeLocks(targetUserDataDir);
 
-    ensureWorkerVideoProfileInitialized(targetUserDataDir);
-
-    const cdpPort = 9230 + currentWorkerId;
-    const windowPosArg = currentWorkerId === 1 ? '--window-position=0,0' : '--window-position=960,0';
+    const cdpPort = 9231;
     const chromeExe = getOriginalChromeExecutablePath();
 
     if (!chromeExe) throw new Error('Google Chrome tidak ditemukan di sistem.');
 
-    onProgress(`[Worker ${currentWorkerId}] Membuka sesi Chrome ChatGPT (Port ${cdpPort})...`);
+    onProgress(`Membuka sesi Chrome ChatGPT (Port ${cdpPort})...`);
 
-    chromeProcess = spawn(chromeExe, [
+    chromeProcess = spawn(chromeExe, [...chromeLiteArgs(), 
       `--remote-debugging-port=${cdpPort}`,
       `--user-data-dir=${targetUserDataDir}`,
       '--no-first-run',
@@ -533,7 +498,7 @@ async function runTikTokVideoPipeline({
       '--hide-crash-restore-bubble',
       '--disable-restore-session-state',
       '--window-size=960,1000',
-      windowPosArg,
+      '--window-position=0,0',
       'https://chatgpt.com/'
     ], { detached: false, stdio: 'ignore' });
 
@@ -554,27 +519,9 @@ async function runTikTokVideoPipeline({
     let page = context.pages().find((p) => p.url().includes('chatgpt.com')) || context.pages()[0];
     if (!page) page = await context.newPage();
 
-    // =========================================================================
-    // LANGKAH: CUSTOM GPT TIKTOK STORYBOARD
-    // =========================================================================
-    const tiktokCustomGptUrl = 'https://chatgpt.com/g/g-6ad08314e1088191a0fa14c307763cde-tiktok-affiliate-storyboard-veo-pro';
-    onProgress(`Menuju Custom GPT [Konsep: ${isDasterConcept ? 'Daster Try-On' : 'TikTok JJ'}]...`);
-    await page.goto(tiktokCustomGptUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
-    await sleep(3500);
-
-    const inputSelector = '#prompt-textarea, div.ProseMirror, div[contenteditable="true"]';
-    let chatInput = page.locator(inputSelector).first();
-    await chatInput.waitFor({ state: 'visible', timeout: 45000 });
-
-    onProgress('Tahap 1: Menjalankan perintah RUN...');
-    const runBtn = page.locator('button:has-text("RUN"), div[role="button"]:has-text("RUN")').first();
-    if (await runBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
-      await runBtn.click();
-      await sleep(1000);
-      await triggerSend(page);
-    } else {
-      await fillAndSendChat(page, 'RUN');
-    }
+    // Storyboard kini lewat plugin ChatGPT (@Nama Plugin) di chat baru, bukan link Custom GPT
+    onProgress('Tahap 1: Menjalankan perintah RUN lewat plugin @TikTok Affiliate Storyboard & Veo Pro...');
+    await startPluginChat(page, 'TikTok Affiliate Storyboard & Veo Pro', 'RUN', onProgress);
     await waitForSmartBotResponse(page, 75000);
 
     onProgress('Mengunggah Foto Produk Etalase dan Foto Referensi Suasana...');
@@ -604,7 +551,7 @@ async function runTikTokVideoPipeline({
     await waitForSmartBotResponse(page, 240000);
 
     onProgress('Mengunduh hasil Master Reference...');
-    const destStoryboard = path.join(STORYBOARD_DIR, `storyboard_${timestamp}_w${currentWorkerId}.png`);
+    const destStoryboard = path.join(STORYBOARD_DIR, `storyboard_${timestamp}.png`);
     const destProject = path.join(currentProjectDir, 'storyboard_canvas.png');
 
     const isDownloaded = await extractAndSaveStoryboardImage(page, destStoryboard, onProgress);
@@ -712,7 +659,6 @@ async function runTikTokVideoPipeline({
     const projectMeta = {
       timestamp,
       concept: concept || 'jj',
-      workerId: currentWorkerId,
       createdAt: new Date().toISOString(),
       storyboardType: storyboardType || '1',
       projectDir: currentProjectDir,
@@ -734,7 +680,6 @@ async function runTikTokVideoPipeline({
       sbList.unshift({
         id: timestamp.toString(),
         concept: concept || 'jj',
-        workerId: currentWorkerId,
         fileName: path.basename(destStoryboard),
         path: destStoryboard,
         projectFolder: currentProjectDir,
@@ -754,9 +699,6 @@ async function runTikTokVideoPipeline({
     }
     await sleep(2000);
 
-    // =========================================================================
-    // EKSEKUSI TAHAP 1: GOOGLE FLOW TIKTOK (3 Candid + 1 Video Motion)
-    // =========================================================================
     onProgress(`Menghubungkan ke Google Flow (${flowModel} · ${flowResolution} · ${flowDuration})...`);
 
     const flowResult = await runFlowProjectCreationTiktok({
@@ -775,9 +717,6 @@ async function runTikTokVideoPipeline({
       throw new Error(flowResult?.error || 'Gagal saat memproses rendering di Google Flow TikTok.');
     }
 
-    // =========================================================================
-    // EKSEKUSI TAHAP 2: CAPCUT WEB JJ OTOMATIS (KHUSUS KONSEP JJ)
-    // =========================================================================
     let finalVideoPath = flowResult.videoPath;
     let finalStoragePath = flowResult.storagePath;
     let capcutResult = null;
@@ -785,7 +724,6 @@ async function runTikTokVideoPipeline({
     if (isJJConcept) {
       let candidPhotos = flowResult.candidPaths || [];
 
-      // Fallback jika candidPaths kosong: ambil 3 foto candid terbaru dari storage/images
       if (candidPhotos.length === 0 && fs.existsSync(STORAGE_IMG_DIR)) {
         candidPhotos = fs.readdirSync(STORAGE_IMG_DIR)
           .filter((f) => f.startsWith('img_candid_') && /\.(png|jpe?g)$/i.test(f))
@@ -818,7 +756,6 @@ async function runTikTokVideoPipeline({
     return {
       success: true,
       concept: concept || 'jj',
-      workerId: currentWorkerId,
       projectFolder: currentProjectDir,
       bannerUsed: localProductBannerPath,
       characterUsed: customCharacterPath,
@@ -842,10 +779,6 @@ async function runTikTokVideoPipeline({
   }
 }
 
-// =========================================================================
-// FUNGSI PENDUKUNG & GALERI PENYIMPANAN VIDEO (Untuk Kebutuhan main.js / UI)
-// =========================================================================
-
 async function uploadProductImageToChatGPT(imagePath) {
   try {
     return { success: true, imagePath };
@@ -857,7 +790,8 @@ async function uploadProductImageToChatGPT(imagePath) {
 async function getSavedVideosList() {
   try {
     if (!fs.existsSync(VIDEOS_DIR)) return [];
-    const files = fs.readdirSync(VIDEOS_DIR).filter((f) => /\.(mp4|webm|mov)$/i.test(f));
+    // *_hd.mp4 = salinan 1080p untuk upload TikTok (videoEnhancer), bukan video baru
+    const files = fs.readdirSync(VIDEOS_DIR).filter((f) => /\.(mp4|webm|mov)$/i.test(f) && !/_hd\.mp4$/i.test(f));
     return files.map((fileName) => {
       const fullPath = path.join(VIDEOS_DIR, fileName);
       const stat = fs.statSync(fullPath);

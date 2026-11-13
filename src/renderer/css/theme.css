@@ -1,0 +1,186 @@
+/* =========================================================================
+   LAPISAN TEMA (dimuat terakhir)
+   Meratakan gaya inline lama: tanpa gradien warna-warni, tanpa glow/blur.
+   Teal = aksi utama, Amber = aksi/penanda kedua, sisanya netral.
+   ========================================================================= */
+
+* {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body {
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(53, 178, 159, 0.3);
+}
+
+/* ---------- Tombol utama ---------- */
+.btn-execute {
+  background: var(--accent-primary) !important;
+  color: #0b1f1b !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+}
+
+.btn-execute:hover:not(:disabled) {
+  background: var(--accent-hover) !important;
+}
+
+.btn-execute:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-execute svg {
+  fill: currentColor;
+}
+
+/* Tombol yang dulunya ungu/pink → amber */
+.btn-execute[style*="#e8a25c"] {
+  background: var(--accent-2) !important;
+  color: #2a1a08 !important;
+}
+
+.btn-execute[style*="#e8a25c"]:hover:not(:disabled) {
+  background: #d99248 !important;
+}
+
+/* Tombol kecil di dalam form → gaya sekunder netral */
+.btn-execute[style*="width: auto"] {
+  background: var(--bg-card-hover) !important;
+  color: var(--text-main) !important;
+  border: 1px solid var(--border-strong) !important;
+}
+
+.btn-execute[style*="width: auto"]:hover:not(:disabled) {
+  background: var(--accent-soft) !important;
+  color: var(--accent-text) !important;
+  border-color: rgba(53, 178, 159, 0.35) !important;
+}
+
+/* Tombol hapus / bahaya */
+.btn-execute[style*="#ef4444"],
+.btn-execute[style*="#dc2626"],
+.btn-execute[style*="#b91c1c"] {
+  background: rgba(226, 101, 93, 0.12) !important;
+  color: #f0a29c !important;
+  border: 1px solid rgba(226, 101, 93, 0.3) !important;
+}
+
+.btn-execute[style*="#ef4444"]:hover:not(:disabled),
+.btn-execute[style*="#dc2626"]:hover:not(:disabled),
+.btn-execute[style*="#b91c1c"]:hover:not(:disabled) {
+  background: rgba(226, 101, 93, 0.2) !important;
+}
+
+/* ---------- Progress bar ---------- */
+#videoProgressBar,
+#autoPilotProgressBar {
+  background: var(--accent-primary) !important;
+}
+
+/* ---------- Kartu & panel ---------- */
+.studio-card {
+  box-shadow: none !important;
+}
+
+.reels-concept-card {
+  background: var(--bg-soft) !important;
+  border: 1px solid var(--border-subtle) !important;
+  box-shadow: none !important;
+}
+
+.reels-concept-card:hover {
+  border-color: rgba(53, 178, 159, 0.4) !important;
+  background: var(--accent-soft) !important;
+}
+
+/* ---------- Form ---------- */
+select.input-box option {
+  background: var(--bg-card);
+  color: var(--text-main);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent-primary);
+}
+
+.time-pill:hover {
+  border-color: rgba(232, 162, 92, 0.3);
+  color: var(--accent-2-text);
+}
+
+/* ---------- Modal ---------- */
+.image-modal-content,
+.modal-content {
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* ---------- Animasi loading ---------- */
+@keyframes app-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Loader tengah untuk area yang sedang mengambil data */
+.app-loader {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.app-loader::before {
+  content: '';
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.08);
+  border-top-color: var(--accent-primary);
+  animation: app-spin 0.8s linear infinite;
+}
+
+/* Spinner di atas gambar yang belum selesai dimuat (dipasang oleh loadingIndicator.js) */
+.img-loading::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--accent-primary);
+  animation: app-spin 0.8s linear infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Ikon slot foto kosong pada form video */
+span[id*="SelectedEmpty"]:empty::before {
+  content: '+';
+  font-size: 18px;
+  font-weight: 300;
+  color: var(--text-dim);
+}
+
+/* Pemutar video halaman Profil TikTok: isi penuh tinggi panel */
+#tiktokPlayerModal video {
+  max-height: 100% !important;
+  height: 100% !important;
+}
