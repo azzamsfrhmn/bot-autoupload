@@ -455,8 +455,9 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
           storagePath: fullPath,
           previewUrl: fullPath,
           url: fullPath,
-          thumbnailPath: fs.existsSync(thumb) ? thumb : (meta.thumbnailPath || ''),
-          poster: fs.existsSync(thumb) ? thumb : (meta.poster || ''),
+          // thumbnail basi (lebih tua dari videonya) dikosongkan → dibuat ulang oleh galeri
+          thumbnailPath: thumbFresh(thumb, fullPath) ? thumb : '',
+          poster: thumbFresh(thumb, fullPath) ? thumb : '',
           timestamp: stat.mtimeMs,
           createdAt: stat.mtime.toISOString(),
           createdDate: stat.mtime.toLocaleString('id-ID')
@@ -470,6 +471,14 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
   // Galeri dulu memasang <video> untuk tiap kartu → terlalu banyak pemutar sekaligus, sebagian
   // gagal dimuat (hitam & tak bisa diputar). Kini kartu memakai gambar <nama>_thumb.png yang
   // diambil dari 30% durasi (bukan frame pertama yang sering hitam). Dibuat antre & di-cache.
+  // Thumbnail valid = ada, tidak kosong, dan dibuat SETELAH videonya selesai ditulis.
+  function thumbFresh(thumb, videoPath) {
+    try {
+      const t = fs.statSync(thumb);
+      const v = fs.statSync(videoPath);
+      return t.size > 1000 && t.mtimeMs >= v.mtimeMs;
+    } catch (e) { return false; }
+  }
   const { getFfmpegPath } = require('../../core/videoEnhancer');
   const { spawn } = require('child_process');
   let thumbQueue = Promise.resolve();
@@ -485,18 +494,36 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
   async function makeVideoThumb(videoPath) {
     const base = path.join(path.dirname(videoPath), path.basename(videoPath, path.extname(videoPath)));
     const thumb = `${base}_thumb.png`;
-    if (fs.existsSync(thumb)) return thumb;
+    if (thumbFresh(thumb, videoPath)) return thumb;
+    // Video masih ditulis (baru selesai dibuat/diunduh) → tunggu ukurannya stabil dulu.
+    // Dulu thumbnail diambil dari file setengah jadi → gambar hitam yang ter-cache selamanya.
+    for (let i = 0; i < 20; i++) {
+      const s1 = fs.statSync(videoPath).size;
+      if (Date.now() - fs.statSync(videoPath).mtimeMs > 4000) break;
+      await new Promise((r) => setTimeout(r, 1500));
+      if (fs.statSync(videoPath).size === s1 && Date.now() - fs.statSync(videoPath).mtimeMs > 3000) break;
+    }
     // durasi dari output "Duration: hh:mm:ss.xx"
     const probe = await runFfmpeg(['-hide_banner', '-i', videoPath]);
     const m = probe.err.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
     const dur = m ? (+m[1] * 3600 + +m[2] * 60 + parseFloat(m[3])) : 0;
-    const at = dur > 0 ? Math.max(0.5, dur * 0.3) : 1;
-    const res = await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-ss', at.toFixed(2), '-i', videoPath,
-      '-frames:v', '1', '-vf', 'scale=360:-2', thumb]);
-    if (res.code === 0 && fs.existsSync(thumb)) return thumb;
-    // fallback: frame pertama (video sangat pendek)
-    await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-y', '-i', videoPath, '-frames:v', '1', '-vf', 'scale=360:-2', thumb]);
-    return fs.existsSync(thumb) ? thumb : '';
+    const tmp = `${base}_thumb.tmp.png`;
+    // "thumbnail" memilih frame paling mewakili dari beberapa frame (menghindari frame hitam/transisi)
+    const tries = [
+      ['-ss', (dur > 0 ? Math.max(0.5, dur * 0.3) : 1).toFixed(2), '-i', videoPath, '-vf', 'thumbnail=30,scale=360:-2'],
+      ['-ss', (dur > 0 ? Math.max(0.2, dur * 0.6) : 2).toFixed(2), '-i', videoPath, '-vf', 'thumbnail=30,scale=360:-2'],
+      ['-i', videoPath, '-vf', 'scale=360:-2']                          // video sangat pendek
+    ];
+    for (const t of tries) {
+      try { fs.unlinkSync(tmp); } catch (e) {}
+      const res = await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-y', ...t, '-frames:v', '1', tmp]);
+      if (res.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 1000) {
+        try { fs.renameSync(tmp, thumb); } catch (e) { fs.copyFileSync(tmp, thumb); try { fs.unlinkSync(tmp); } catch (x) {} }
+        return thumb;
+      }
+    }
+    try { fs.unlinkSync(tmp); } catch (e) {}
+    return '';
   }
   ipcMain.handle('ensure-video-thumb', async (event, videoPath) => {
     try {

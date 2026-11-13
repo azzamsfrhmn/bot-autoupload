@@ -1,6 +1,6 @@
 {
   "name": "bot-autoupload",
-  "version": "1.0.63",
+  "version": "1.0.64",
   "description": "Bot Auto Upload TikTok & AI Generator",
   "author": "Etnic Store",
   "main": "src/main/main.js",
