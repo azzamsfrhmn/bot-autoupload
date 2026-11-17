@@ -55,7 +55,7 @@ cache/
 *.cache
 
 # Document dan notebook yang mungkin berisi informasi sensitif
-*.md
+/CLAUDE.md
 *.txt
 *.rst
 *.ipynb
@@ -66,7 +66,8 @@ app.log
 server.log
 
 # Artefak build
-build/
+build/*
+!build/installer.nsh
 dist/
 *.egg-info/
 *.so
@@ -92,7 +93,7 @@ zsh_history
 
 # File dump yang mungkin berisi kredensial
 dump.*
-core
+/core
 
 # File yang dihasilkan oleh editor yang mungkin berisi data sensitif
 *.swp
@@ -515,3 +516,4 @@ google-flow-api-main/
 
 # Secret lokal
 *.local.js
+*.zip
