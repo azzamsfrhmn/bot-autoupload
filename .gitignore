@@ -510,3 +510,5 @@ backup/
 vibot/
 google-flow-api-main/
 *.idsig
+*.keystore
+*.jks
