@@ -483,6 +483,87 @@ export function renderFeedGrid(posts) {
   });
 }
 
+// ===== Profil channel YouTube (dibaca dari halaman channel lewat Chrome profil channel) =====
+function renderYoutubeProfileLayout(container, profile, activeAcc, note = '') {
+  const p = { ...(activeAcc || {}), ...(profile || {}) };
+  const name = p.fullName || p.name || p.username || 'Channel YouTube';
+  const handle = String(p.username || '').replace(/^@/, '');
+  const posts = Array.isArray(p.posts) ? p.posts : [];
+  const readAt = p.profileReadAt ? new Date(p.profileReadAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const stat = (v, label) => `<div><strong style="color:#fff;font-weight:700;font-size:17px">${escapeHtml(v)}</strong> <span style="color:rgba(255,255,255,.65)">${label}</span></div>`;
+  const subsText = String(p.subscribersText || '').replace(/\s*(subscriber|pelanggan).*$/i, '') || formatCount(p.followersCount || 0);
+
+  container.innerHTML = `
+    <div style="background:var(--bg-card);border:1px solid var(--border-subtle);color:var(--text-main);min-height:80vh;padding:28px 36px;border-radius:var(--radius-lg)">
+      <div style="display:flex;gap:30px;align-items:flex-start;margin-bottom:22px">
+        <div id="ytAvatarWrapper" style="width:130px;height:130px;min-width:130px;border-radius:50%;overflow:hidden;background:#27354a;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.5)"></div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+            <h1 style="font-size:24px;font-weight:700;color:#fff;margin:0">${escapeHtml(name)}</h1>
+            <span style="font-size:11px;font-weight:700;letter-spacing:.4px;color:#fff;background:#ff0000;padding:3px 8px;border-radius:5px">YOUTUBE</span>
+          </div>
+          ${handle && !/^UC/.test(handle) ? `<div style="font-size:14px;color:rgba(255,255,255,.55);margin-bottom:14px">@${escapeHtml(handle)}</div>` : '<div style="margin-bottom:14px"></div>'}
+          <div style="display:flex;gap:24px;align-items:center;font-size:14px;margin-bottom:14px;flex-wrap:wrap">
+            ${stat(subsText, 'Subscriber')}${stat(p.videosText ? String(p.videosText).replace(/\s*video.*$/i, '') : formatCount(p.postsCount || posts.length), 'Video')}
+          </div>
+          <div style="font-size:14px;color:rgba(255,255,255,.9);line-height:1.55;white-space:pre-line;margin-bottom:14px;max-height:110px;overflow:auto">${escapeHtml(p.biography || 'Belum ada deskripsi channel.')}</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button id="btnRefreshYoutubeProfile" type="button" class="chip-btn" style="display:flex;align-items:center;gap:6px">
+              <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+              Perbarui dari YouTube</button>
+            ${p.channelId ? `<button id="btnOpenYoutubeChannel" type="button" class="chip-btn">Buka Channel ↗</button>` : ''}
+            <span style="font-size:12px;color:rgba(255,255,255,.5)">${readAt ? `diperbarui ${escapeHtml(readAt)}` : ''}</span>
+          </div>
+          <div id="ytProfileNote" style="font-size:12px;margin-top:8px;color:#fca5a5">${escapeHtml(note)}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:32px;border-bottom:1px solid rgba(255,255,255,.12);margin-bottom:18px;font-size:15px;font-weight:600">
+        <div style="padding-bottom:10px;border-bottom:2px solid #fff;color:#fff">Video & Shorts</div>
+      </div>
+      <div id="ytPostsContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px"></div>
+    </div>`;
+
+  const av = container.querySelector('#ytAvatarWrapper');
+  if (p.avatar || p.profilePicUrl) setAvatar(av, p.avatar || p.profilePicUrl); else renderFallbackAvatar(av);
+
+  const grid = container.querySelector('#ytPostsContainer');
+  if (!posts.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px 0;color:rgba(255,255,255,.4);font-size:14px">Belum ada video publik. Klik <b>Perbarui dari YouTube</b> untuk memuat ulang.</div>';
+  } else {
+    grid.innerHTML = posts.map((v, i) => `
+      <div data-i="${i}" class="yt-post" style="cursor:pointer;border-radius:8px;overflow:hidden;background:#1b1d20">
+        <div style="position:relative;aspect-ratio:${v.isShort ? '9/16' : '16/9'};max-height:300px;background:#111">
+          <img src="${escapeHtml(v.coverUrl || '')}" referrerpolicy="no-referrer" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.opacity='0'">
+          ${v.isShort ? '<span style="position:absolute;top:6px;left:6px;background:#ff0000;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px">SHORTS</span>' : ''}
+        </div>
+        <div style="padding:8px 10px">
+          <div style="font-size:12.5px;color:#fff;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escapeHtml(v.title || '')}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:4px">${escapeHtml([v.viewsText, v.published].filter(Boolean).join(' · '))}</div>
+        </div>
+      </div>`).join('');
+    grid.querySelectorAll('.yt-post').forEach((el) => el.addEventListener('click', () => {
+      const v = posts[+el.getAttribute('data-i')];
+      if (v?.url) window.electronAPI?.openExternalUrl?.(v.url);
+    }));
+  }
+
+  container.querySelector('#btnOpenYoutubeChannel')?.addEventListener('click', () => window.electronAPI?.openExternalUrl?.(`https://www.youtube.com/channel/${p.channelId}`));
+  const btn = container.querySelector('#btnRefreshYoutubeProfile');
+  btn?.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Membaca channel (±20 detik)...';
+    try {
+      const r = await window.electronAPI?.refreshProfile?.({ force: true });
+      const fresh = await window.electronAPI?.getAllAccounts?.();
+      const acc = fresh?.accounts?.find((a) => a.id === activeAcc?.id) || activeAcc;
+      await updateSidebarProfile(r?.profile?.avatar || acc?.avatar);
+      renderYoutubeProfileLayout(container, r?.profile || {}, acc, r && r.success === false ? `❌ ${r.error || 'Gagal membaca channel.'}` : '');
+    } catch (e) {
+      renderYoutubeProfileLayout(container, profile, activeAcc, `❌ ${e.message}`);
+    }
+  });
+}
+
 // ===== Profil Shopee Video (data dibaca dari app Shopee di HP: beranda kreator) =====
 function renderShopeeProfileLayout(container, profile, activeAcc, note = '') {
   const p = { ...(activeAcc || {}), ...(profile || {}) };
@@ -608,6 +689,10 @@ export async function loadFullProfile(overrideProfile = null, overridePosts = nu
 
     await updateSidebarProfile(resolvedAvatar);
 
+    if (profile?.platform === 'youtube' || activeAcc?.platform === 'youtube') {
+      renderYoutubeProfileLayout(viewProfileContainer, profile || {}, activeAcc);
+      return;
+    }
     if (profile?.platform === 'shopee' || activeAcc?.platform === 'shopee') {
       renderShopeeProfileLayout(viewProfileContainer, profile || {}, activeAcc);
       return;

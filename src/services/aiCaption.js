@@ -145,6 +145,20 @@ function readEdu3DScriptForVideo(mediaFiles = []) {
       }
       continue;
     }
+    // Serial Animasi: naskah.json (kalimat[].text) → bentuk yang sama dengan naskah 3D Edukasi
+    const s = base.match(/^video_serial3d_(\d+)(?:_hd)?\.mp4$/i);
+    if (s) {
+      for (const c of [
+        path.resolve(path.dirname(f), '..', 'bahan_video', `proyek_serial3d_${s[1]}`, 'naskah.json'),
+        path.resolve(process.cwd(), 'storage', 'bahan_video', `proyek_serial3d_${s[1]}`, 'naskah.json')
+      ]) {
+        try {
+          const n = JSON.parse(fs.readFileSync(c, 'utf8'));
+          return { topic: `${n.seri?.judul || ''} ${n.seri?.label || 'DAY'} ${n.seri?.hari || ''}`.trim(), scenes: (n.kalimat || []).map((k) => ({ narration: k.text || '' })) };
+        } catch (e) {}
+      }
+      continue;
+    }
     const m = base.match(/^video_edu3d_(\d+)(?:_hd)?\.mp4$/i);
     if (!m) continue;
     const candidates = [

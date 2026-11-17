@@ -58,6 +58,7 @@ function platformOf(acc) {
   if (p) return p;
   if (id.startsWith('fbpage_')) return 'facebook';
   if (id.startsWith('shopee_')) return 'shopee';
+  if (id.startsWith('yt_')) return 'youtube';
   if (id.startsWith('ig_')) return 'instagram';
   return 'tiktok';
 }
@@ -67,7 +68,7 @@ function findAccount(ident, exact = false) {
   const c = clean(ident);
   if (!c) return null;
   const list = accounts();
-  const hit = list.find((a) => [a.id, a.username, String(a.id || '').replace(/^(ig_|tiktok_|fbpage_|shopee_)/i, '')]
+  const hit = list.find((a) => [a.id, a.username, String(a.id || '').replace(/^(ig_|tiktok_|fbpage_|shopee_|yt_)/i, '')]
     .some((v) => v && clean(v) === c));
   if (hit || exact) return hit || null;
   const s = slug(ident);

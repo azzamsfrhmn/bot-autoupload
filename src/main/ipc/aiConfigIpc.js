@@ -153,6 +153,7 @@ module.exports = function registerAiConfigIpc(ipcMain, ctx) {
 
       let current = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) : {};
       current.headless = Boolean(isHeadless);
+      current.headlessDefaultOn = true; // pilihan pengguna: jangan ditimpa migrasi default
       fs.writeFileSync(cfgPath, JSON.stringify(current, null, 2), 'utf-8');
       return { success: true };
     } catch (err) {
@@ -165,10 +166,10 @@ module.exports = function registerAiConfigIpc(ipcMain, ctx) {
       const cfgPath = path.resolve(RUNTIME_ROOT, 'sessions/flow_profiles/accounts_config.json');
       if (fs.existsSync(cfgPath)) {
         const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-        return { headless: Boolean(raw.headless) };
+        return { headless: typeof raw.headless === 'boolean' ? raw.headless : true };
       }
     } catch (e) {}
-    return { headless: false };
+    return { headless: true };
   });
 
   safeHandle('test-ai-connection', async () => {

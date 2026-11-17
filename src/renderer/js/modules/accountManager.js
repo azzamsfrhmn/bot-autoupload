@@ -15,7 +15,8 @@ const ICONS = {
   instagram: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg>',
   shopee: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2a4.5 4.5 0 0 0-4.47 4H4.2a1 1 0 0 0-1 1.07l.9 13.1A2 2 0 0 0 6.1 22h11.8a2 2 0 0 0 2-1.83l.9-13.1a1 1 0 0 0-1-1.07h-3.33A4.5 4.5 0 0 0 12 2zm0 1.8A2.7 2.7 0 0 1 14.65 6h-5.3A2.7 2.7 0 0 1 12 3.8zm.15 5.2c1.6 0 2.6.7 2.9 1.05l-.8 1.1c-.4-.33-1.15-.75-2.1-.75-.9 0-1.4.4-1.4.9 0 .6.7.85 1.75 1.2 1.5.5 2.85 1.1 2.85 2.8 0 1.6-1.35 2.8-3.4 2.8-1.6 0-2.85-.7-3.4-1.3l.85-1.15c.6.55 1.5 1.05 2.55 1.05 1.05 0 1.65-.5 1.65-1.15 0-.75-.75-1-1.85-1.4-1.4-.45-2.7-1.05-2.7-2.6 0-1.45 1.3-2.55 3.1-2.55z"/></svg>'
 };
-const COLORS = { tiktok: '#ff2d55', facebook: '#1877f2', instagram: '#d946ef', shopee: '#ee4d2d' };
+const COLORS = { tiktok: '#ff2d55', facebook: '#1877f2', instagram: '#d946ef', shopee: '#ee4d2d', youtube: '#ff0000' };
+ICONS.youtube = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31.3 31.3 0 0 0 0 12a31.3 31.3 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31.3 31.3 0 0 0 24 12a31.3 31.3 0 0 0-.5-5.8zM9.6 15.6V8.4l6.3 3.6-6.3 3.6z"/></svg>';
 const TRASH = '<svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
 
 function platformOf(acc) {
@@ -23,6 +24,7 @@ function platformOf(acc) {
   const id = String(acc.id || '').toLowerCase();
   if (p === 'facebook' || id.startsWith('fbpage_')) return 'facebook';
   if (p === 'shopee' || id.startsWith('shopee_')) return 'shopee';
+  if (p === 'youtube' || id.startsWith('yt_')) return 'youtube';
   return p === 'tiktok' || id.startsWith('tiktok_') || id.startsWith('tt_') ? 'tiktok' : 'instagram';
 }
 
@@ -55,9 +57,12 @@ function chooseFacebook(fbList) {
     wrap.className = 'acc-modal';
     wrap.innerHTML = `
       <div class="acc-modal-box">
-        <div class="acc-modal-title">Login Instagram lewat Facebook</div>
-        <div class="acc-modal-note">Pilih akun Facebook yang terhubung dengan akun Instagram Anda.</div>
+        <div class="acc-modal-title">Login Instagram</div>
+        <div class="acc-modal-note">Login langsung dengan username &amp; sandi Instagram, atau lewat akun Facebook yang terhubung.</div>
         <div class="acc-fb-choices">
+            <button type="button" class="acc-fb-choice" data-id="direct">
+              <span style="font-size:20px;width:32px;text-align:center">🔑</span><span>Login langsung (username &amp; sandi)</span>
+            </button>
           ${fbList.map((fb) => `
             <button type="button" class="acc-fb-choice" data-id="${esc(fb.id)}">
               ${avatarHtml(fb.avatar, fb.name)}<span>${esc(fb.name)}</span>
@@ -288,7 +293,7 @@ function shopeeConnectWizard() {
   });
 }
 
-async function addAccount(platform, fbList = []) {
+async function addAccount(platform, fbList = [], viaFb = '') {
   const api = window.electronAPI || {};
   let res = null;
   if (platform === 'tiktok') {
@@ -298,14 +303,18 @@ async function addAccount(platform, fbList = []) {
     if (res && !res.success && res.error) alert('Gagal membuka Chrome: ' + res.error);
     return;
   }
+  if (platform === 'youtube') {
+    res = await api.loginYoutubeAccount?.();
+    if (res && !res.success && res.error) showNotice(res.error, 'error');
+    return;
+  }
   if (platform === 'shopee') {
     if (await shopeeConnectWizard()) document.dispatchEvent(new CustomEvent('accounts-changed'));
     return;
   } else if (platform === 'facebook') {
     res = await api.loginFacebookAccount?.();
   } else {
-    if (fbList.length === 0) { showNotice('Login Facebook dulu, lalu login Instagram lewat Facebook.', 'error'); return; }
-    const fbId = fbList.length === 1 ? fbList[0].id : await chooseFacebook(fbList);
+    const fbId = viaFb || (fbList.length === 0 ? 'direct' : await chooseFacebook(fbList));
     if (!fbId) return;
     res = await api.loginInstagramAccount?.(fbId);
   }
@@ -334,8 +343,10 @@ export function initAccountManager() {
             <div class="acc-card-top">
               ${avatarHtml(avatarSrc, username)}
               <div class="acc-meta">
-                <div class="acc-name">${platformOf(acc) === 'facebook' ? '' : '@'}${esc(username)}</div>
-                <div class="acc-status"><span class="acc-dot"></span>${platformOf(acc) === 'shopee'
+                <div class="acc-name">${platformOf(acc) === 'facebook' ? '' : platformOf(acc) === 'youtube' ? esc(acc.name || username) : '@' + esc(username)}</div>
+                <div class="acc-status"><span class="acc-dot"></span>${platformOf(acc) === 'youtube'
+                  ? `${acc.subscribersText ? esc(acc.subscribersText) : 'Channel YouTube'}${isActive ? ' · Aktif' : ''}`
+                  : platformOf(acc) === 'shopee'
                   ? (acc.shopeeSerialNo
                       ? `📱 ${esc(String(acc.phoneModel || 'HP').replace(/_/g, ' '))}${acc.followers ? ` · ${esc(acc.followers)} pengikut` : ''}${isActive ? ' · Aktif' : ''}`
                       : '⚠️ Belum terhubung ke HP — klik "+ Hubungkan HP Shopee"')
@@ -422,6 +433,7 @@ export function initAccountManager() {
       const instagram = allAccounts.filter((a) => platformOf(a) === 'instagram');
       const fbPages = allAccounts.filter((a) => platformOf(a) === 'facebook');
       const shopee = allAccounts.filter((a) => platformOf(a) === 'shopee');
+      const youtube = allAccounts.filter((a) => platformOf(a) === 'youtube');
 
       container.innerHTML = [
         group('tiktok', 'TikTok', tiktok, postingCard, {
@@ -429,7 +441,7 @@ export function initAccountManager() {
         }, '+ Tambah Akun TikTok'),
         fbList.length === 0
           ? group('facebook', 'Facebook', fbList, fbCluster, {
-              title: 'Belum ada akun Facebook', sub: 'Login Facebook untuk posting Reels ke Facebook Page & untuk login Instagram (sekali klik "Log in with Facebook").', button: 'Login Facebook'
+              title: 'Belum ada akun Facebook', sub: 'Login Facebook untuk posting Reels ke Facebook Page. (Opsional untuk Instagram — Instagram bisa login langsung.)', button: 'Login Facebook'
             }, '')
           : `<section class="acc-group">
               <div class="acc-group-head">
@@ -444,13 +456,15 @@ export function initAccountManager() {
             </section>`,
         group('instagram', 'Instagram', instagram, postingCard, {
           title: 'Belum ada akun Instagram',
-          sub: fbList.length ? 'Login Instagram lewat akun Facebook yang sudah tersimpan — cukup klik "Log in with Facebook".' : 'Login Facebook dulu di grup Facebook di atas, setelah itu login Instagram lewat Facebook.',
-          button: fbList.length ? 'Login Instagram via Facebook' : 'Login Facebook dulu',
-          disabled: fbList.length === 0
-        }, fbList.length ? '+ Tambah Akun Instagram' : ''),
+          sub: 'Login langsung dengan username & sandi Instagram di Chrome' + (fbList.length ? ', atau lewat akun Facebook yang sudah tersimpan.' : '.'),
+          button: 'Login Instagram'
+        }, '+ Tambah Akun Instagram'),
         group('shopee', 'Shopee', shopee, postingCard, {
           title: 'Belum ada akun Shopee', sub: 'Hubungkan HP Android yang sudah login app Shopee. Akun dibaca langsung dari HP — 1 HP = 1 akun Shopee Video.', button: 'Hubungkan HP Shopee'
-        }, '+ Hubungkan HP Shopee')
+        }, '+ Hubungkan HP Shopee'),
+        group('youtube', 'YouTube', youtube, postingCard, {
+          title: 'Belum ada channel YouTube', sub: 'Login akun Google pemilik channel lewat Chrome. Upload Shorts & video biasa lewat YouTube Studio, bisa dijadwalkan.', button: 'Login YouTube'
+        }, '+ Tambah Channel YouTube')
       ].join('');
 
       container.querySelectorAll('.btn-switch-account').forEach((btn) => {
@@ -508,7 +522,7 @@ export function initAccountManager() {
         btn.addEventListener('click', () => {
           const platform = btn.getAttribute('data-platform');
           const fbId = btn.getAttribute('data-fb');
-          addAccount(platform, fbId ? fbList.filter((f) => f.id === fbId) : fbList);
+          addAccount(platform, fbId ? fbList.filter((f) => f.id === fbId) : fbList, fbId || '');
         });
       });
     } catch (err) {

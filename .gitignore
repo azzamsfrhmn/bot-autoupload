@@ -505,3 +505,8 @@ update_carakerja.zip
 update_carakerja_x/
 storage/tts_cache/
 backup/
+
+# Folder lokal besar / pihak ketiga
+vibot/
+google-flow-api-main/
+*.idsig

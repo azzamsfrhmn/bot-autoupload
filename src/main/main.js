@@ -56,6 +56,23 @@ const ACCOUNTS_FILE = path.resolve(DATA_ROOT, 'sessions/accounts.json');
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
 
+// Mode senyap (headless) jadi default aplikasi: sekali saja semua pengguna dipindah ke aktif.
+// Sesudah itu pilihan pengguna di Pengaturan AI tetap dihormati (penanda headlessDefaultOn).
+(function migrateHeadlessDefault() {
+  try {
+    const cfgPath = path.resolve(SESSIONS_DIR, 'flow_profiles/accounts_config.json');
+    if (!fs.existsSync(cfgPath)) return; // config baru otomatis memakai default aktif
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    if (cfg.headlessDefaultOn) return;
+    cfg.headless = true;
+    cfg.headlessDefaultOn = true;
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf-8');
+    console.log('[Setelan] Mode senyap (headless) diaktifkan sebagai default.');
+  } catch (e) {
+    console.warn('[Setelan] Migrasi mode senyap gagal:', e.message);
+  }
+})();
+
 // Inisialisasi & Sanitasi file akun baru
 function sanitizeAccountsOnStart() {
   try {
@@ -439,6 +456,7 @@ const registerAiConfigIpc = require('./ipc/aiConfigIpc');
 const registerRemotionIpc = require('./ipc/remotionIpc');
 const registerEdu3DIpc = require('./ipc/edu3dIpc');
 const registerKartun3DIpc = require('./ipc/kartun3dIpc');
+const registerSerial3DIpc = require('./ipc/serial3dIpc');
 
 let mainWindow;
 
@@ -646,6 +664,7 @@ app.whenReady().then(() => {
   registerRemotionIpc(ipcMain, ctx);
   registerEdu3DIpc(ipcMain, ctx);
   registerKartun3DIpc(ipcMain, ctx);
+  registerSerial3DIpc(ipcMain, ctx);
 
   // Mode Perangkat Ringan (otomatis dari spek, bisa dipaksa dari Pengaturan AI)
   if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -692,43 +711,7 @@ app.whenReady().then(() => {
     return await handleOpenStreamerForActiveAccount(targetAcc);
   });
 
-  // =========================================================================
-  // OVERRIDE: ISOLASI OTOMATIS DATA SHOWCASE PER USERNAME AKUN AKTIF
-  // =========================================================================
-  safeHandle('get-tiktok-showcase-products', async (event, forceRefresh = false, explicitAccount = null) => {
-    try {
-      const targetUser = cleanUserIdentifier(explicitAccount || getActiveTikTokUsername());
-      const af = require('../core/accountFiles');   // folder akun dulu, lalu file lama
-      const legacyShowcase = path.resolve(DATA_ROOT, 'storage', `showcase_${targetUser}.json`);
-      const accountShowcaseFile = af.readPath(legacyShowcase);
-      const fallbackFile = af.readPath(path.resolve(DATA_ROOT, 'sessions', `showcase_${targetUser}.json`));
-
-      // 1. Cek berkas cache spesifik milik akun aktif ini
-      let resolvedFile = null;
-      if (fs.existsSync(accountShowcaseFile)) resolvedFile = accountShowcaseFile;
-      else if (fs.existsSync(fallbackFile)) resolvedFile = fallbackFile;
-
-      if (resolvedFile && !forceRefresh) {
-        const cached = JSON.parse(fs.readFileSync(resolvedFile, 'utf-8'));
-        return { success: true, account: targetUser, data: Array.isArray(cached) ? cached : (cached.products || []) };
-      }
-
-      // 2. Jika forceRefresh atau file belum ada, coba baca dari modul showcaseSession
-      if (typeof tiktokSessionManager.getShowcaseProductsForAccount === 'function') {
-        const fresh = await tiktokSessionManager.getShowcaseProductsForAccount(targetUser, forceRefresh);
-        if (fresh && fresh.success && Array.isArray(fresh.data)) {
-          fs.writeFileSync(af.writePath(legacyShowcase), JSON.stringify(fresh.data, null, 2), 'utf-8');
-          return { success: true, account: targetUser, data: fresh.data };
-        }
-      }
-
-      // 3. Jika belum pernah disinkronkan, kembalikan data kosong untuk akun ini (bukan akun lain)
-      return { success: true, account: targetUser, data: [] };
-    } catch (err) {
-      console.warn('[ShowcaseIPC] Gagal memuat produk showcase:', err.message);
-      return { success: false, error: err.message, data: [] };
-    }
-  });
+  // get-tiktok-showcase-products: ditangani showcaseIpc.js (cache + sinkron dari TikTok Shop)
 
   safeHandle('get-showcase-metrics-store', async (event, explicitAccount = null) => {
     try {

@@ -41,7 +41,12 @@ async function fillThumb(img) {
       return;
     }
   } catch (e) {}
-  if (img.isConnected) { img.setAttribute('data-thumb', 'failed'); img.src = PH_FAILED; }
+  if (!img.isConnected) return;
+  img.setAttribute('data-thumb', 'failed');
+  img.src = PH_FAILED;
+  // Gagal sering sementara (file masih dipakai/ditulis) → coba lagi otomatis: 10 dtk, 30 dtk, 90 dtk
+  const n = (img._thumbFails = (img._thumbFails || 0) + 1);
+  if (n <= 3) setTimeout(() => { if (img.isConnected && img.getAttribute('data-thumb') === 'failed') fillThumb(img); }, [10, 30, 90][n - 1] * 1000);
 }
 
 // Isi thumbnail yang belum ada (berurutan, tidak membebani PC)
@@ -53,6 +58,7 @@ export async function hydrateVideoThumbs(root) {
     img._thumbErrBound = true;
     if (img.complete && img.naturalWidth === 0 && img.getAttribute('loading') !== 'lazy') img.setAttribute('data-thumb', 'pending');
     img.addEventListener('error', () => {
+      if (img.getAttribute('data-thumb') === 'failed') return;   // placeholder sendiri, jangan loop
       if (img._thumbRetried) { img.setAttribute('data-thumb', 'failed'); img.src = PH_FAILED; return; }
       img._thumbRetried = true;
       fillThumb(img);

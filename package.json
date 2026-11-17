@@ -1,6 +1,6 @@
 {
   "name": "bot-autoupload",
-  "version": "1.0.64",
+  "version": "1.0.68",
   "description": "Bot Auto Upload TikTok & AI Generator",
   "author": "Etnic Store",
   "main": "src/main/main.js",
@@ -94,6 +94,7 @@
   },
   "dependencies": {
     "@devicefarmer/adbkit": "^3.3.9",
+    "@fontsource/poppins": "^5.3.0",
     "@google/genai": "^2.27.0",
     "@google/generative-ai": "^0.24.1",
     "@remotion/renderer": "4.0.540",
@@ -106,6 +107,7 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "remotion": "4.0.540",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "three": "^0.187.0"
   }
 }

@@ -771,6 +771,7 @@ async function uploadToTikTok({
   const conceptKey = (() => {
     const c = String(concept || '').toLowerCase();
     if (c === 'daster' && isRemotionFotoFile) return 'foto';
+    if (c === 'pov2') return 'pov';
     if (['jj', 'daster', 'sensasi', 'pov'].includes(c)) return c;
     // Remotion: dari foto (tanpa suara) = 'foto', overlay video (suara asli) = seperti POV
     const REMOTION_AS = { remotionfoto: 'foto', remotionvideo: 'pov', edu3d: 'pov' };

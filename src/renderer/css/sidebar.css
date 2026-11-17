@@ -357,6 +357,7 @@ aside.sidebar {
 
 .account-switcher-menu .as-plat.as-facebook::before { content: '\25CF  '; color: #1877f2; }
 .account-switcher-menu .as-plat.as-shopee::before { content: '\25CF  '; color: #ee4d2d; }
+.account-switcher-menu .as-plat.as-youtube::before { content: '\25CF  '; color: #ff0000; }
 
 .acc-subtitle { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #9d9c97; margin: 6px 2px 10px; }
 .acc-subtitle ~ .acc-subtitle { margin-top: 18px; }

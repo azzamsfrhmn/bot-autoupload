@@ -10,6 +10,7 @@ function platformOf(acc) {
   const id = String(acc.id || '').toLowerCase();
   if (p === 'facebook' || id.startsWith('fbpage_')) return 'facebook';
   if (p === 'shopee' || id.startsWith('shopee_')) return 'shopee';
+  if (p === 'youtube' || id.startsWith('yt_')) return 'youtube';
   return p === 'tiktok' || id.startsWith('tiktok_') || id.startsWith('tt_') ? 'tiktok' : 'instagram';
 }
 
@@ -40,7 +41,7 @@ export function initAccountSwitcher() {
       return `
         <button type="button" class="as-item${isActive ? ' is-active' : ''}" data-id="${esc(acc.id)}">
           <span class="as-avatar">${avatar ? `<img src="${esc(avatar)}" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<span>${esc(user.charAt(0).toUpperCase())}</span></span>
-          <span class="as-info"><span class="as-name">@${esc(user)}</span><span class="as-plat as-${plat}">${plat === 'tiktok' ? 'TikTok' : plat === 'facebook' ? 'Facebook Page' : plat === 'shopee' ? 'Shopee' : 'Instagram'}</span></span>
+          <span class="as-info"><span class="as-name">@${esc(user)}</span><span class="as-plat as-${plat}">${plat === 'tiktok' ? 'TikTok' : plat === 'facebook' ? 'Facebook Page' : plat === 'shopee' ? 'Shopee' : plat === 'youtube' ? 'YouTube' : 'Instagram'}</span></span>
           ${isActive ? '<span class="as-check">✓</span>' : ''}
         </button>`;
     }).join('');

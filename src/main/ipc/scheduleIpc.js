@@ -46,9 +46,9 @@ module.exports = function registerScheduleIpc(ipcMain, ctx) {
     return true;
   });
 
-  ipcMain.handle('schedule-post', async (event, { mediaPaths, caption, scheduleTime, productId, productLinkTitle, concept, shareToFacebook = null, shopeeProductLinks = null }) => {
+  ipcMain.handle('schedule-post', async (event, { mediaPaths, caption, scheduleTime, productId, productLinkTitle, concept, shareToFacebook = null, shopeeProductLinks = null, youtubeTitle = '', youtubeProductQueries = null }) => {
     // 3D Edukasi: narasi di dalam video → pengaturan suara saat posting sama dengan POV
-    const conceptKey = ['edu3d', 'kartun3d', 'carakerja3d'].includes(concept) ? 'pov' : (['jj', 'daster', 'sensasi', 'pov'].includes(concept) ? concept : '');
+    const conceptKey = ['edu3d', 'kartun3d', 'carakerja3d', 'serial3d', 'povhp', 'pov2'].includes(concept) ? 'pov' : (['jj', 'daster', 'sensasi', 'pov'].includes(concept) ? concept : '');
     let files = Array.isArray(mediaPaths) ? mediaPaths : [mediaPaths];
     const activeAcc = getActiveAccount();
     const targetUser = activeAcc?.username || TARGET_USERNAME;
@@ -57,7 +57,7 @@ module.exports = function registerScheduleIpc(ipcMain, ctx) {
     const platform = activeAcc?.platform || 'instagram';
 
     // TikTok: video 720p dari Flow ditingkatkan ke 1080p bitrate tinggi sebelum dijadwalkan / dikirim ke server
-    if (platform === 'tiktok' || platform === 'facebook') {
+    if (platform === 'tiktok' || platform === 'facebook' || platform === 'youtube') {
       files = await Promise.all(files.map((f) => enhanceVideoForTikTok(f)));
     }
 
@@ -98,6 +98,7 @@ module.exports = function registerScheduleIpc(ipcMain, ctx) {
       accountRef: activeAcc?.id || '', // id akun di registri (Facebook Page memakai ini)
       ...(platform === 'instagram' && typeof shareToFacebook === 'boolean' ? { shareToFacebook } : {}),
       ...(platform === 'shopee' && Array.isArray(shopeeProductLinks) && shopeeProductLinks.length ? { shopeeProductLinks } : {}),
+      ...(platform === 'youtube' ? { youtubeTitle: String(youtubeTitle || '').slice(0, 100), youtubeProductQueries: Array.isArray(youtubeProductQueries) ? youtubeProductQueries.slice(0, 30) : [] } : {}),
       platform,
       status: remoteJob ? REMOTE_STATUS[remoteJob.status] || 'remote_pending' : 'pending',
       createdAt: new Date().toISOString()
@@ -163,7 +164,7 @@ module.exports = function registerScheduleIpc(ipcMain, ctx) {
     const mediaPaths = await Promise.all(sourceFiles.map((f) => enhanceVideoForTikTok(f)));
     return await uploadToTikTok({
       ...payload,
-      concept: ['edu3d', 'kartun3d', 'carakerja3d'].includes(payload?.concept) ? 'pov' : payload?.concept,
+      concept: ['edu3d', 'kartun3d', 'carakerja3d', 'serial3d', 'povhp', 'pov2'].includes(payload?.concept) ? 'pov' : payload?.concept,
       mediaPaths,
       accountId: active?.id || 'karuna_id'
     });

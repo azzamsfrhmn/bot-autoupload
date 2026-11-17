@@ -176,9 +176,38 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
             const pages = context.pages();
             const page = pages.find((p) => !p.url().includes('chrome://')) || pages[0];
 
-            // 1. Dapatkan URL profil akun aktif
+            // 1. Dapatkan URL profil akun aktif.
+            // Cookie sesi muncul SEBELUM halaman selesai pindah setelah login → page.evaluate sering gagal.
+            // Utamakan request langsung (cookie konteks yang sama) + data halaman, coba sampai ~45 dtk.
             let myProfileUrl = '';
-            for (let attempt = 0; attempt < 12; attempt++) {
+            const detectUname = async () => {
+              for (const aid of ['1459', '1988']) {
+                try {
+                  const r = await context.request.get(`https://www.tiktok.com/passport/web/account/info/?aid=${aid}`, { timeout: 8000 });
+                  const j = await r.json().catch(() => null);
+                  const u = j?.data?.username || j?.data?.unique_id;
+                  if (u) return String(u);
+                } catch (e) {}
+              }
+              try {
+                const r = await context.request.get('https://www.tiktok.com/foryou', { timeout: 15000 });
+                const html = await r.text();
+                // hanya user yang login: __UNIVERSAL_DATA_FOR_REHYDRATION__ → webapp.app-context.user.uniqueId
+                const m = html.match(/<script[^>]*id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+                if (m) {
+                  const data = JSON.parse(m[1]);
+                  const u = data?.__DEFAULT_SCOPE__?.['webapp.app-context']?.user?.uniqueId;
+                  if (u) return String(u);
+                }
+              } catch (e) {}
+              return '';
+            };
+            for (let attempt = 0; attempt < 15 && !myProfileUrl; attempt++) {
+              const u = await detectUname();
+              if (u) { myProfileUrl = `https://www.tiktok.com/@${u}`; break; }
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+            for (let attempt = 0; attempt < 12 && !myProfileUrl; attempt++) {
               myProfileUrl = await page.evaluate(async () => {
                 try {
                   const res = await fetch('https://www.tiktok.com/passport/web/account/info/', { credentials: 'include' });
@@ -293,7 +322,8 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
               };
             }).catch(() => null);
 
-            let finalUsername = profileData?.username ? profileData.username.replace(/^@/, '').trim() : targetUser;
+            const urlUser = (myProfileUrl.match(/\/@([A-Za-z0-9._]+)/) || [])[1] || '';
+            let finalUsername = profileData?.username ? profileData.username.replace(/^@/, '').trim() : (urlUser || targetUser);
             let finalNickname = profileData?.nickname || finalUsername;
             let finalAvatar = profileData?.avatar || '';
             let followingCount = profileData?.following || '0';
@@ -761,19 +791,65 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
 
   // Login Instagram memakai profil Chrome akun Facebook: tombol "Log in with Facebook" diklik otomatis,
   // aplikasi menunggu sampai masuk, lalu mengambil profil lengkap & menutup Chrome sendiri.
+  function openInstagramDirectLogin(profileDir) {
+    const removeProfile = () => setTimeout(() => { try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch (e) {} }, 4000);
+    const res = runChromeLogin({
+      profileDir,
+      urls: ['https://www.instagram.com/accounts/login/'],
+      onRead: async (context, page, closeReader) => {
+        try {
+          const ck = await context.cookies(['https://www.instagram.com', 'https://i.instagram.com']);
+          if (!ck.some((c) => c.name === 'sessionid' && c.value)) {
+            throw new Error('Belum login Instagram. Klik Login Instagram lagi, login sampai masuk beranda Instagram (selesaikan verifikasi kode bila diminta), lalu TUTUP Chrome.');
+          }
+          notifyLogin({ status: 'info', message: 'Login Instagram terbaca → mengambil data profil...' });
+          await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => {});
+          await page.waitForTimeout(2500);
+          const { fetchProfileInPage } = require('../../platforms/instagram/igProfileFetcher');
+          const profile = await fetchProfileInPage(page).catch(() => null);
+          const raw = await context.cookies(['https://www.instagram.com', 'https://i.instagram.com']);
+          const cookies = raw.map((c) => ({
+            name: c.name, value: c.value, domain: c.domain, path: c.path || '/',
+            secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite || 'None',
+            ...(c.expires > 0 ? { expirationDate: c.expires, expires: c.expires } : {})
+          }));
+          await closeReader();
+          const saved = await saveInstagramFromCookies(cookies, profile ? { profile } : {});
+          if (!saved.success) throw new Error(saved.error);
+          notifyLogin({ status: 'success', message: `Akun Instagram @${saved.username} berhasil terhubung.` });
+          const win = ctx.getMainWindow();
+          if (win && !win.isDestroyed()) setTimeout(() => win.loadFile(path.join(__dirname, '../../renderer/dashboard.html')), 1200);
+        } finally {
+          // Profil sementara tidak dipakai lagi (posting memakai cookie tersimpan)
+          removeProfile();
+        }
+      }
+    });
+    if (!res.success) { removeProfile(); return res; }
+    notifyLogin({ status: 'info', message: 'Chrome terbuka: login Instagram (username & sandi, selesaikan verifikasi kode bila diminta) sampai masuk beranda, lalu TUTUP Chrome.' });
+    return res;
+  }
+
+  // fbId 'direct' (atau belum ada akun Facebook) = login langsung username/sandi Instagram di profil Chrome sementara.
   function openInstagramLogin(fbId) {
     const fbList = loadFacebookAccounts();
-    const fb = fbList.find((a) => a.id === fbId) || (fbList.length === 1 ? fbList[0] : null);
-    if (!fb) return { success: false, error: fbList.length ? 'Pilih akun Facebook untuk login Instagram.' : 'Login Facebook dulu sebelum login Instagram.' };
+    const direct = fbId === 'direct' || fbList.length === 0;
+    const fb = direct ? null : (fbList.find((a) => a.id === fbId) || (fbList.length === 1 ? fbList[0] : null));
+    if (!direct && !fb) return { success: false, error: 'Pilih akun Facebook untuk login Instagram.' };
+    const profileDir = direct ? path.resolve(igSessionMod().SESSIONS_DIR, 'instagram_profiles', `ig_login_${Date.now()}`) : fb.profileDir;
+    if (direct) fs.mkdirSync(profileDir, { recursive: true });
     if (chromeLoginRunning) return { success: false, error: 'Masih ada Chrome login yang terbuka. Selesaikan / tutup dulu.' };
+    // Login langsung: Chrome BIASA tanpa remote debugging (halaman verifikasi Meta / auth_platform menolak
+    // browser yang dikendalikan). Pengguna login lalu menutup Chrome → sesi dibaca dari profil yang sama.
+    if (direct) return openInstagramDirectLogin(profileDir);
     const chromePath = getOriginalChromeExecutablePath();
     if (!chromePath) return { success: false, error: 'Google Chrome asli tidak ditemukan di sistem.' };
 
-    purgeTikTokSessionLocks(fb.profileDir);
+    purgeTikTokSessionLocks(profileDir);
     const cdpPort = 59000 + Math.floor(Math.random() * 5000);
     const chromeProc = spawn(chromePath, [
       `--remote-debugging-port=${cdpPort}`,
-      `--user-data-dir=${fb.profileDir}`,
+      `--user-data-dir=${profileDir}`,
       '--remote-allow-origins=*',
       '--hide-crash-restore-bubble',
       '--no-first-run',
@@ -785,7 +861,9 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
     chromeLoginRunning = true;
     let chromeClosed = false;
     chromeProc.on('exit', () => { chromeClosed = true; });
-    notifyLogin({ status: 'info', message: `Login Instagram lewat Facebook (${fb.name})... tombol "Log in with Facebook" diklik otomatis.` });
+    notifyLogin({ status: 'info', message: direct
+      ? 'Chrome terbuka: login Instagram (username & sandi / kode verifikasi). Aplikasi menunggu sampai masuk, lalu menutup Chrome sendiri.'
+      : `Login Instagram lewat Facebook (${fb.name})... tombol "Log in with Facebook" diklik otomatis.` });
 
     (async () => {
       let browser = null;
@@ -822,7 +900,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
         while (!chromeClosed && Date.now() < deadline) {
           const ck = await context.cookies(['https://www.instagram.com']).catch(() => []);
           if (ck.some((c) => c.name === 'sessionid' && c.value)) { loggedIn = true; break; }
-          if (Date.now() - lastClick > 4000 && await clickFacebookButton()) lastClick = Date.now();
+          if (!direct && Date.now() - lastClick > 4000 && await clickFacebookButton()) lastClick = Date.now();
           await new Promise((r) => setTimeout(r, 1500));
         }
         if (chromeClosed) { notifyLogin({ status: 'cancelled', message: 'Chrome ditutup sebelum login Instagram selesai.' }); return; }
@@ -840,7 +918,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
           secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite || 'None',
           ...(c.expires > 0 ? { expirationDate: c.expires, expires: c.expires } : {})
         }));
-        const saved = await saveInstagramFromCookies(cookies, { facebookId: fb.id, ...(profile ? { profile } : {}) });
+        const saved = await saveInstagramFromCookies(cookies, { ...(fb ? { facebookId: fb.id } : {}), ...(profile ? { profile } : {}) });
         if (!saved.success) throw new Error(saved.error);
 
         // Lepas sesi Instagram dari profil (Facebook tetap login) → bisa menambah akun Instagram lain
@@ -861,6 +939,11 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       } finally {
         if (browser) await browser.close().catch(() => {});
         chromeLoginRunning = false;
+        // Profil sementara login langsung tidak dipakai lagi (posting memakai cookie tersimpan)
+        if (direct) {
+          try { chromeProc.kill(); } catch (e) {}
+          setTimeout(() => { try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch (e) {} }, 4000);
+        }
         const win = ctx.getMainWindow();
         if (win && !win.isDestroyed()) win.webContents.send('accounts-updated');
       }
@@ -1206,6 +1289,86 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
   });
 
   safeHandle('get-facebook-accounts', async () => loadFacebookAccounts().map(({ id, uid, name, avatar, lastActive }) => ({ id, uid, name, avatar, lastActive })));
+  // =========================================================================
+  // YOUTUBE: login Google di Chrome asli (profil per channel), channel dibaca dari YouTube Studio
+  // =========================================================================
+  const ytStudio = () => require('../../platforms/youtube/youtubeStudio');
+  const youtubeFields = (prof) => ({
+    platform: 'youtube',
+    channelId: prof.channelId,
+    username: prof.handle || prof.channelId,
+    name: prof.name, fullName: prof.name,
+    biography: prof.biography || '',
+    avatar: prof.avatar || '', profilePicUrl: prof.avatar || '',
+    followersCount: prof.followersCount || 0,
+    subscribersText: prof.subscribersText || '',
+    videosText: prof.videosText || '',
+    postsCount: prof.postsCount || (prof.posts || []).length,
+    posts: prof.posts || [],
+    profileReadAt: new Date().toISOString()
+  });
+  function saveYoutubeAccount(prof, profileDir) {
+    const igSession = igSessionMod();
+    const reg = igSession.getAccountsRegistry();
+    const id = `yt_${prof.channelId}`;
+    const entry = { id, ...youtubeFields(prof), profileDir, lastActive: new Date().toISOString() };
+    const idx = reg.accounts.findIndex((a) => a.id === id);
+    if (idx >= 0) reg.accounts[idx] = { ...reg.accounts[idx], ...entry };
+    else reg.accounts.push(entry);
+    if (!reg.activeAccountId) reg.activeAccountId = id;
+    igSession.saveAccountsRegistry(reg);
+    return entry;
+  }
+  function openYoutubeLogin() {
+    const root = ytStudio().PROFILES_DIR();
+    const tempDir = path.join(root, `yt_login_${Date.now()}`);
+    const res = runChromeLogin({
+      profileDir: tempDir,
+      urls: ['https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fstudio.youtube.com%2F'],
+      onRead: async (context, page, closeReader) => {
+        notifyLogin({ status: 'info', message: 'Membaca channel YouTube...' });
+        const prof = await ytStudio().readChannelProfile(page);
+        if (!prof) throw new Error('Belum login YouTube. Klik Login YouTube lagi, login Google sampai YouTube Studio terbuka, lalu tutup Chrome.');
+        await closeReader();
+        const finalDir = path.join(root, `yt_${prof.channelId}`);
+        let profileDir = tempDir;
+        try {
+          if (fs.existsSync(finalDir)) fs.rmSync(finalDir, { recursive: true, force: true });
+          for (let i = 0; i < 15; i++) {
+            try { fs.renameSync(tempDir, finalDir); profileDir = finalDir; break; } catch (e) { await new Promise((r) => setTimeout(r, 1000)); }
+          }
+        } catch (e) {}
+        saveYoutubeAccount(prof, profileDir);
+        notifyLogin({ status: 'success', message: `Channel YouTube "${prof.name}" tersimpan.` });
+      }
+    });
+    if (!res.success) return res;
+    notifyLogin({ status: 'info', message: 'Chrome terbuka: login akun Google sampai YouTube Studio terbuka, lalu TUTUP Chrome.' });
+    return res;
+  }
+  async function refreshYoutubeProfile(active) {
+    if (!active.profileDir) throw new Error('Profil Chrome channel ini tidak ada. Login YouTube ulang.');
+    const chrome = await ytStudio().openStudioChrome(active.profileDir);
+    try {
+      const prof = await ytStudio().readChannelProfile(chrome.page, active.channelId);
+      if (!prof) throw new Error('Sesi YouTube habis. Login YouTube ulang di Kelola Akun.');
+      return saveYoutubeAccount(prof, active.profileDir);
+    } finally { await chrome.close(); }
+  }
+  const youtubeSessionInfo = (a) => ({
+    isLoggedIn: Boolean(a.profileDir && fs.existsSync(a.profileDir)),
+    activeAccountId: a.id, platform: 'youtube', username: a.username, channelId: a.channelId,
+    fullName: a.name || a.username, name: a.name || a.username,
+    category: 'YOUTUBE CHANNEL', biography: a.biography || '',
+    avatar: a.avatar || '', profilePicUrl: a.avatar || '',
+    followersCount: a.followersCount || 0, subscribersText: a.subscribersText || '', videosText: a.videosText || '',
+    postsCount: a.postsCount || (a.posts || []).length, posts: a.posts || [],
+    profileReadAt: a.profileReadAt || ''
+  });
+  safeHandle('login-youtube-account', async () => {
+    try { return openYoutubeLogin(); } catch (e) { return { success: false, error: e.message }; }
+  });
+
   safeHandle('login-facebook-account', async () => {
     try { return openFacebookLogin(); } catch (e) { return { success: false, error: e.message }; }
   });
@@ -1383,6 +1546,10 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       const { removeAccount, getAccountsRegistry: regOf } = require('../../platforms/instagram/sessionManager');
       const target = (regOf().accounts || []).find((x) => x.id === accountId);
       if (typeof removeAccount === 'function') removeAccount(accountId);
+      // Akun YouTube: hapus profil Chrome channel-nya
+      if (target && target.platform === 'youtube' && target.profileDir && target.profileDir.startsWith(ytStudio().PROFILES_DIR())) {
+        try { fs.rmSync(target.profileDir, { recursive: true, force: true }); } catch (e) {}
+      }
       // Akun Shopee: hapus juga profil Chrome-nya
       if (target && target.platform === 'shopee' && target.profileDir && target.profileDir.startsWith(SHOPEE_PROFILES_DIR())) {
         try { fs.rmSync(target.profileDir, { recursive: true, force: true }); } catch (e) {}
@@ -1426,6 +1593,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
     }
 
     if (active?.platform === 'shopee') return shopeeSessionInfo(active);
+    if (active?.platform === 'youtube') return youtubeSessionInfo(active);
     if (active?.platform === 'facebook') {
       const fb = loadFacebookAccounts().find((a) => a.id === active.facebookId);
       return {
@@ -1467,6 +1635,7 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
       return { success: true, posts: fresh?.posts || [], profile: fresh?.profile };
     }
     if (active?.platform === 'shopee') return { success: true, posts: active.posts || [], profile: shopeeSessionInfo(active) };
+    if (active?.platform === 'youtube') return { success: true, posts: active.posts || [], profile: youtubeSessionInfo(active) };
     if (active?.platform === 'facebook') return { success: true, posts: [], profile: null };
     if (active?.platform === 'instagram') {
       const cached = readInstagramCache(active);
@@ -1504,6 +1673,17 @@ module.exports = function registerAccountIpc(ipcMain, ctx) {
     }
     if (active?.platform === 'facebook') {
       return { success: true, profile: { username: active.username, fullName: active.name, profilePicUrl: active.avatar, category: 'FACEBOOK PAGE' }, posts: [] };
+    }
+    if (active?.platform === 'youtube') {
+      if (!opts?.force) return { success: true, profile: youtubeSessionInfo(active), posts: active.posts || [] };
+      try {
+        const fresh = await refreshYoutubeProfile(active);
+        const win = ctx.getMainWindow();
+        if (win && !win.isDestroyed()) win.webContents.send('accounts-updated');
+        return { success: true, profile: youtubeSessionInfo(fresh), posts: fresh.posts || [] };
+      } catch (e) {
+        return { success: false, error: e.message, profile: youtubeSessionInfo(active), posts: active.posts || [] };
+      }
     }
     if (active?.platform === 'shopee') {
       if (active.connectMethod !== 'hp' || !opts?.force) return { success: true, profile: shopeeSessionInfo(active), posts: active.posts || [] };

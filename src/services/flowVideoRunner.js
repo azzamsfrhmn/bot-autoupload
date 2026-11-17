@@ -21,6 +21,7 @@ const https = require('https');
 const { BrowserWindow, clipboard, nativeImage } = require('electron');
 // Jeda, batas tunggu & flag Chrome menyesuaikan spek perangkat (Mode Perangkat Ringan)
 const { scaleMs, chromeLiteArgs } = require('../core/perfProfile');
+const { flowUnusualActivityMessage } = require('../core/flowWorkerPool');
 
 const ROOT_DIR = process.cwd();
 const FLOW_BASE_DIR = path.resolve(ROOT_DIR, 'sessions/flow_profiles');
@@ -534,8 +535,8 @@ function getFlowAccountsConfigRaw() {
       ]
     };
   }
-  // Pastikan sakelar headless selalu tersimpan eksplisit (default nonaktif)
-  if (typeof cfg.headless !== 'boolean') cfg.headless = false;
+  // Pastikan sakelar headless selalu tersimpan eksplisit (default: aktif / senyap)
+  if (typeof cfg.headless !== 'boolean') cfg.headless = true;
   return cfg;
 }
 
@@ -1053,6 +1054,7 @@ async function runFlowProjectCreation({
   storyboardImagePath = null,
   promptText,
   flowVideoType = 'Bahan',
+  flowRatio = '9:16',
   flowModel = 'Veo 3.1 - Lite',
   flowResolution = '720p',
   flowDuration = '10 Detik',
@@ -1210,7 +1212,7 @@ async function runFlowProjectCreation({
     const cleanRes = String(flowResolution).includes('360') ? '360p' : '720p';
     const durMatch = String(flowDuration).match(/\d+/);
     const cleanDurationVal = durMatch ? durMatch[0] : '8';
-    const cleanModel = String(flowModel || 'Veo 3.1 - Lite').replace(/google/i, '').trim();
+    const cleanModel = require('./flowModels').normalizeFlowModel(flowModel);
     const cleanOutputCount = String(flowOutputCount).match(/\d+/) ? `x${String(flowOutputCount).match(/\d+/)[0]}` : 'x1';
 
     onProgress(`Mengatur setelan mesin render (${cleanModel} · ${cleanRes} · ${cleanDurationVal} dtk · ${cleanOutputCount})...`);
@@ -1297,9 +1299,34 @@ async function runFlowProjectCreation({
         await cdp.nativeClickAt(resPos.x, resPos.y, 500);
       }
 
-      // 6. Pilih Durasi
+      // 6. Pilih Durasi — Omni 1.2 Flash memakai SLIDER (geser lewat tombol panah), model lain tombol
+      // Nilai slider BUKAN detik (mis. 0..12 = 3..15 dtk) → patokannya label "N Dtk" di panel
+      const readSlider = async () => (await cdp.send('Runtime.evaluate', { returnByValue: true, expression: `(() => {
+        const panel = document.querySelector('flow-prompt-box-settings') || document;
+        const i = panel.querySelector('input[type="range"]');
+        if (!i) return null; i.focus();
+        const n = (v, d) => { const x = parseFloat(v); return Number.isFinite(x) ? x : d; };
+        const m = (panel.innerText || '').replace(/\\s+/g, ' ').match(/(?:Durasi|Duration)\\s*(\\d+)\\s*(?:dtk|detik|sec|s)\\b/i);
+        return { min: n(i.min, 0), max: n(i.max, 100), value: n(i.value, 0), secs: m ? Number(m[1]) : null };
+      })()` }).catch(() => null))?.result?.value;
+      const slider = await readSlider();
+      if (slider) {
+        const want = Number(cleanDurationVal);
+        let st = slider;
+        for (let i = 0; i < 30 && st && st.secs != null && st.secs !== want; i++) {
+          const up = st.secs < want;
+          if ((up && st.value >= st.max) || (!up && st.value <= st.min)) break;
+          await cdp.pressKey(up ? 'ArrowRight' : 'ArrowLeft', up ? 39 : 37);
+          await sleep(120);
+          const next = await readSlider();
+          if (!next || next.secs == null) break;
+          st = next;
+          if ((up && next.secs > want) || (!up && next.secs < want)) break;
+        }
+        onProgress(`Durasi slider: ${st && st.secs != null ? st.secs : '?'} dtk (target ${want} dtk)`);
+      }
       const cleanDurRegex = `^\\s*${cleanDurationVal}\\s*(?:dtk|detik|s)?\\s*$`;
-      const durPos = await cdp.findElementCenter({
+      const durPos = slider ? null : await cdp.findElementCenter({
         selector: 'mat-button-toggle, button, [role="radio"], span',
         textRegexStr: cleanDurRegex,
         minY: 180,
@@ -1358,10 +1385,15 @@ async function runFlowProjectCreation({
     onProgress(`Menunggu gambar selesai diunggah...`);
     await sleep(3500);
 
-    for (let w = 0; w < 35; w++) {
+    let stillUploading = true;
+    for (let w = 0; w < 200; w++) {
       const loadingPos = await cdp.findElementCenter({ selector: '.loading-percentage, flow-soupy-overlay' });
-      if (!loadingPos) break;
+      if (!loadingPos) { stillUploading = false; break; }
       await sleep(1500);
+    }
+    // Upload gagal di Flow tampil macet (mis. 99%) tanpa pesan → jangan kirim prompt tanpa gambar
+    if (stillUploading) {
+      throw new Error('Upload gambar storyboard ke Google Flow tidak selesai dalam 300 dtk (macet). Prompt TIDAK dikirim agar video tidak dibuat tanpa gambar. Cek koneksi internet lalu coba lagi.');
     }
 
     const imgInPrompt = await cdp.findElementCenter({
@@ -1379,8 +1411,16 @@ async function runFlowProjectCreation({
       if (galleryTileImg && currentEditorPos) {
         onProgress(`Menyematkan gambar ke kotak prompt...`);
         await cdp.nativeDragAndDrop(galleryTileImg.x, galleryTileImg.y, currentEditorPos.x, currentEditorPos.y);
+        await sleep(2000);
+      }
+      const imgAfterPin = await cdp.findElementCenter({
+        selector: 'flow-rich-text-editor img, .prompt-media-preview img, .prompt-top-row img'
+      });
+      if (!imgAfterPin) {
+        throw new Error('Gambar storyboard tidak muncul di kotak prompt Google Flow. Prompt TIDAK dikirim agar video tidak dibuat tanpa gambar. Coba lagi.');
       }
     }
+    onProgress('Gambar storyboard sudah ada di kotak prompt ✓');
 
     await humanDelay(500, 800);
 
@@ -1493,7 +1533,7 @@ async function runFlowProjectCreation({
       }
 
       if (state?.status === 'unusual') {
-        throw new Error('Akun terindikasi pembatasan aktivitas.');
+        throw new Error(flowUnusualActivityMessage(targetAcc && targetAcc.name, { rested: false }));
       }
 
       if ((state?.status === 'done' || interceptedVideoUrls.length > 0) && elapsedSec >= 15) {

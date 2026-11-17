@@ -63,7 +63,7 @@ function getFlowHeadlessConfig(customRoot) {
   } catch (e) {
     console.warn('[Headless Config Error]:', e);
   }
-  return false;
+  return true; // default: mode senyap (headless) aktif
 }
 
 function resolveSharedProfileDir(customPath, baseDir) {

@@ -57,7 +57,7 @@ function getFlowHeadlessConfig(customRoot) {
       }
     }
   } catch (e) {}
-  return false;
+  return true; // default: mode senyap (headless) aktif
 }
 
 function resolveSharedProfileDir(customPath, baseDir) {

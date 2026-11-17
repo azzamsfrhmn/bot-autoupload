@@ -48,9 +48,12 @@ async function fetchProfileInPage(page) {
 
   // 2. Halaman profil
   await page.goto(`https://www.instagram.com/${username}/`, { waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => {});
-  await page.waitForSelector('header', { timeout: 15000 }).catch(() => {});
-  await page.waitForSelector('main a[href*="/p/"] img, main a[href*="/reel/"] img', { timeout: 8000 }).catch(() => {});
-  await page.waitForTimeout(1500);
+  await page.waitForSelector('header', { timeout: 30000 }).catch(() => {});
+  // Internet lambat: tunggu sampai angka statistik (followers) & grid postingan benar-benar tampil
+  await page.waitForFunction(() => /[\d.,]+\s*[KkMm]?\s*(followers?|pengikut)/i.test((document.querySelector('header')?.innerText || '').replace(/\s+/g, ' ')), null, { timeout: 45000 }).catch(() => {});
+  await page.waitForSelector('main a[href*="/p/"] img, main a[href*="/reel/"] img', { timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('main a[href*="/p/"] img, main a[href*="/reel/"] img, header img')).every((i) => i.complete), null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(2000);
   const raw = await page.evaluate(() => {
     const og = document.querySelector('meta[property="og:description"]')?.content || '';
     const header = document.querySelector('header');
@@ -73,10 +76,54 @@ async function fetchProfileInPage(page) {
   // og:description: "569 Followers, 10 Following, 94 Posts - See Instagram photos and videos from NAMA (@user)"
   const ogM = raw.og.match(/^([\d.,]+\s*[KkMm]?)\s+Followers?,\s*([\d.,]+\s*[KkMm]?)\s+Following,\s*([\d.,]+\s*[KkMm]?)\s+Posts?/i);
   const nameM = raw.og.match(/from\s+(.+?)\s+\(@/i);
-  const findLine = (re) => raw.lines.find((l) => re.test(l)) || '';
-  const followersCount = ogM ? parseCount(ogM[1]) : parseCount(findLine(/followers|pengikut/i));
-  const followingCount = ogM ? parseCount(ogM[2]) : parseCount(findLine(/following|diikuti|mengikuti/i));
-  const postsCount = ogM ? parseCount(ogM[3]) : parseCount(findLine(/posts?|postingan/i));
+  // Angka & label bisa beda baris ("46" / "followers") → cari di teks header yang digabung
+  const flat = raw.lines.join(' ');
+  const statOf = (label) => { const m = flat.match(new RegExp(`([\\d.,]+\\s*(?:[KkMm]|rb|jt)?)\\s*(?:${label})\\b`, 'i')); return m ? parseCount(m[1]) : 0; };
+  // Angka di header profil = yang dilihat pengguna. og:description sering basi (mis. "0 Followers") → hanya cadangan.
+  const hasHeaderStats = /[\d.,]+\s*[KkMm]?\s*(followers?|pengikut)/i.test(flat);
+  let followersCount = hasHeaderStats ? statOf('followers?|pengikut') : (ogM ? parseCount(ogM[1]) : 0);
+  let followingCount = hasHeaderStats ? statOf('following|diikuti|mengikuti') : (ogM ? parseCount(ogM[2]) : 0);
+  let postsCount = hasHeaderStats ? statOf('posts?|postingan|kiriman') : (ogM ? parseCount(ogM[3]) : 0);
+
+  // Like & komentar: tampil di kartu grid saat diarahkan mouse (angka like lalu komentar)
+  const grid = page.locator('main a[href*="/p/"], main a[href*="/reel/"]');
+  const nGrid = Math.min(12, await grid.count().catch(() => 0));
+  for (let i = 0; i < nGrid; i++) {
+    const a = grid.nth(i);
+    await a.hover({ timeout: 5000 }).catch(() => {});
+    let info = null;
+    for (let t = 0; t < 6 && !info; t++) {
+      await page.waitForTimeout(400);
+      info = await a.evaluate((e) => {
+        const nums = (e.innerText || '').split('\n').map((x) => x.trim()).filter((x) => /^[\d.,]+\s*([KkMm]|rb|jt)?$/.test(x));
+        return nums.length ? { code: (e.getAttribute('href') || '').split('/').filter(Boolean).pop(), nums } : null;
+      }).catch(() => null);
+    }
+    const post = info && raw.posts.find((p) => p.shortcode === info.code);
+    if (post) { post.likeCount = parseCount(info.nums[0]); post.commentCount = parseCount(info.nums[1] || '0'); }
+  }
+  await page.mouse.move(5, 5).catch(() => {});
+
+  // Views: tab Reels (angka ditonton di tiap kartu reel)
+  if (raw.posts.some((p) => p.isVideo)) {
+    const tab = page.locator(`a[href="/${username}/reels/"]`).first();
+    if (await tab.isVisible({ timeout: 10000 }).catch(() => false)) {
+      await tab.click().catch(() => {});
+      await page.waitForFunction(() => /\/reels\/?$/.test(location.pathname)
+        && Array.from(document.querySelectorAll('main a[href*="/reel/"]')).some((a) => /\d/.test(a.innerText || '')), null, { timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(1000);
+      const views = await page.evaluate(() => Array.from(document.querySelectorAll('main a[href*="/reel/"]')).map((a) => {
+        const nums = (a.innerText || '').split('\n').map((x) => x.trim()).filter((x) => /^[\d.,]+\s*([KkMm]|rb|jt)?$/.test(x));
+        return { code: (a.getAttribute('href') || '').split('/').filter(Boolean).pop(), v: nums[nums.length - 1] || '' };
+      })).catch(() => []);
+      for (const v of views) {
+        const post = raw.posts.find((p) => p.shortcode === v.code);
+        if (post && v.v) post.viewsCount = parseCount(v.v);
+      }
+    }
+  }
+  const api = null;
+  postsCount = Math.max(postsCount, raw.posts.length);
 
   // Bio: baris setelah statistik sampai tombol aksi
   const iFollowing = raw.lines.findIndex((l) => /^[\d.,]+\s*[KkMm]?\s*(following|diikuti|mengikuti)/i.test(l));
@@ -91,9 +138,9 @@ async function fetchProfileInPage(page) {
 
   const data = {
     username,
-    fullName,
-    biography: bioLines.join('\n'),
-    externalUrl,
+    fullName: api?.fullName || fullName,
+    biography: api?.bio ?? bioLines.join('\n'),
+    externalUrl: api?.link || externalUrl,
     category: 'AKUN BISNIS / KREATOR',
     followersCount,
     followingCount,

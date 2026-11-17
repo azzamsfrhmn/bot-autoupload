@@ -17,7 +17,7 @@
 
 const { spawn } = require('child_process');
 const { cleanupFailedChrome } = require('../core/chromeCleanup');
-const { runWithFlowLease, leaseFlowAccount, releaseFlowLease, pickRandomFlowAccount, isFlowAccountShared, classifyFlowAccountFailure, isFlowAccountRested, FLOW_BLOCK_MS } = require('../core/flowWorkerPool');
+const { runWithFlowLease, leaseFlowAccount, releaseFlowLease, pickRandomFlowAccount, isFlowAccountShared, classifyFlowAccountFailure, isFlowAccountRested, FLOW_BLOCK_MS, isUnusualActivityError, flowUnusualActivityMessage, describeRestingFlowAccounts } = require('../core/flowWorkerPool');
 const { syncProfileClone, workerProfileDir, hasUsableClone } = require('../core/profileClone');
 const { withClipboardLock } = require('../core/clipboardLock');
 const fs = require('fs');
@@ -28,6 +28,7 @@ const https = require('https');
 const { BrowserWindow, clipboard, nativeImage } = require('electron');
 // Jeda, batas tunggu & flag Chrome menyesuaikan spek perangkat (Mode Perangkat Ringan)
 const { scaleMs, chromeLiteArgs } = require('../core/perfProfile');
+const { waitFlowImageUpload } = require('./flowUploadWait');
 const { dismissFlowOnboarding, disableFlowAgent, agreeFlowImageRights } = require('./flowOnboarding');
 
 const ROOT_DIR = process.cwd();
@@ -39,7 +40,7 @@ const MIN_FLOW_CREDIT = 12;
 // Biaya kredit asli per kombinasi setelan, dipelajari dari label Flow
 // <a class="credit-cost-link">12 kredit</a> (tiap model/resolusi/durasi/output berbeda)
 function buildFlowCostKey({ flowModel, flowResolution, flowDuration, flowOutputCount }) {
-  const model = String(flowModel || 'Veo 3.1 - Lite').replace(/google/i, '').toLowerCase().replace(/[\s\-–]+/g, ' ').trim();
+  const model = require('./flowModels').normalizeFlowModel(flowModel).toLowerCase().replace(/[\s\-–]+/g, ' ').trim();
   const res = String(flowResolution || '').includes('360') ? '360p' : '720p';
   const dur = (String(flowDuration || '').match(/\d+/) || ['8'])[0];
   const out = (String(flowOutputCount || '').match(/\d+/) || ['1'])[0];
@@ -261,7 +262,7 @@ function getFlowAccountsConfigRaw() {
   if (!cfg || !Array.isArray(cfg.accounts) || cfg.accounts.length === 0) {
     cfg = {
       activeAccountId: 'acc_1',
-      headless: false,
+      headless: true,
       accounts: [{ id: 'acc_1', name: 'Akun 1 (Utama)', status: 'Belum Login', credits: 'Tidak Tersedia' }]
     };
   }
@@ -491,6 +492,8 @@ function resolveActiveAccountForRender(onProgress = () => {}, requiredCredit = M
     throw new Error(`Kredit ${currentAcc ? currentAcc.name : 'Akun Utama'} tersisa < ${requiredCredit} (${currentCredit} Kredit) dan ${pendingLoginAcc.name} belum login. Anda tidak bisa membuat video reels sebelum login ke ${pendingLoginAcc.name} di Pengaturan AI.`);
   }
 
+  const restingMsg = describeRestingFlowAccounts(cfg.accounts);
+  if (restingMsg) throw new Error(restingMsg);
   throw new Error(`Semua akun Google Flow kehabisan kredit (< ${requiredCredit}). Anda tidak dapat membuat video reels sampai kuota harian direset besok atau menambahkan akun baru.`);
 }
 
@@ -517,7 +520,7 @@ async function runFlowProjectCreationTiktokDaster({
   const cfgRaw = getFlowAccountsConfigRaw();
   const effectiveHeadless = typeof headless === 'boolean' 
     ? headless 
-    : (typeof cfgRaw?.headless === 'boolean' ? cfgRaw.headless : false);
+    : (typeof cfgRaw?.headless === 'boolean' ? cfgRaw.headless : true);
 
   let targetAcc = null;
   let cfg = null;
@@ -669,7 +672,7 @@ async function runFlowProjectCreationTiktokDaster({
     await disableFlowAgent((expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }).then((r) => r?.result?.value), onProgress, sleep);
 
     const cleanOutput = String(flowOutputCount).match(/\d+/) ? `x${String(flowOutputCount).match(/\d+/)[0]}` : 'x1';
-    const cleanModel = String(flowModel || 'Veo 3.1 - Lite').replace(/google/i, '').trim();
+    const cleanModel = require('./flowModels').normalizeFlowModel(flowModel);
     const cleanRes = String(flowResolution).includes('360') ? '360p' : '720p';
     const durMatch = String(flowDuration).match(/\d+/);
     const cleanDurationVal = durMatch ? durMatch[0] : '8';
@@ -762,6 +765,43 @@ async function runFlowProjectCreationTiktokDaster({
       return false;
     };
 
+    // Durasi bertipe SLIDER (Omni 1.2 Flash: label "Durasi" + "13 Dtk"). Nilai slider BUKAN detik
+    // (mis. 0..12 = 3..15 dtk), jadi patokannya label "N Dtk": geser panah kiri/kanan sampai label = target.
+    // Return false bila tidak ada slider.
+    const setFlowDurationSlider = async (seconds) => {
+      if (!(await openSettingsPanel())) return false;
+      const read = () => evalFlow(`
+        (() => {
+          const panel = document.querySelector('flow-prompt-box-settings') || document;
+          const input = panel.querySelector('input[type="range"]');
+          if (!input) return null;
+          input.focus();
+          const t = (panel.innerText || '').replace(/\\s+/g, ' ');
+          const m = t.match(/(?:Durasi|Duration)\\s*(\\d+)\\s*(?:dtk|detik|sec|s)\\b/i);
+          const num = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
+          return { min: num(input.min, 0), max: num(input.max, 100), value: num(input.value, 0), secs: m ? Number(m[1]) : null };
+        })()
+      `);
+      const want = Number(seconds);
+      let st = await read();
+      if (!st) return false;
+      if (st.secs === want) { onProgress(`✓ Durasi: ${want} dtk (sudah sesuai)`); return true; }
+      if (st.secs == null) { onProgress('[Peringatan] Label durasi slider tidak terbaca, durasi dibiarkan.'); return true; }
+      for (let i = 0; i < 30 && st && st.secs !== want; i++) {
+        const up = st.secs < want;
+        if ((up && st.value >= st.max) || (!up && st.value <= st.min)) break;
+        await cdp.pressKey(up ? 'ArrowRight' : 'ArrowLeft', up ? 39 : 37);
+        await sleep(120);
+        const next = await read();
+        if (!next || next.secs == null) break;
+        if ((up && next.secs > want) || (!up && next.secs < want)) { st = next; break; } // tidak ada nilai persis
+        st = next;
+      }
+      if (st && st.secs === want) { onProgress(`✓ Durasi: diubah ke ${want} dtk`); return true; }
+      onProgress(`[Peringatan] Durasi slider: ingin ${want} dtk, terpilih ${st ? st.secs : '-'} dtk.`);
+      return true;   // slider ada → jangan cari tombol durasi lama
+    };
+
     // Model: baca teks .model-select-trigger-content tanpa ikon arrow_drop_down
     const readActiveModel = async () => (await evalFlow(`
       (() => {
@@ -850,7 +890,9 @@ async function runFlowProjectCreationTiktokDaster({
       await selectFlowToggle(['Rasio aspek'], `^\\s*${cleanRatio.replace(':', '\\s*:\\s*')}\\s*$`, 'Rasio');
       await selectFlowModel();
       await selectFlowToggle(['Resolusi', 'Kualitas', 'Resolution'], `^\\s*${cleanRes}`, 'Resolusi', true);
-      await selectFlowToggle(['Durasi', 'Duration'], `^\\s*${cleanDurationVal}\\s*(dtk|detik|s)?\\s*$`, 'Durasi', true);
+      if (!(await setFlowDurationSlider(cleanDurationVal))) {
+        await selectFlowToggle(['Durasi', 'Duration'], `^\\s*${cleanDurationVal}\\s*(dtk|detik|s)?\\s*$`, 'Durasi', true);
+      }
       await selectFlowToggle(['Jumlah output'], `^\\s*${cleanOutput}\\s*$`, 'Output');
 
       // Biaya asli: <a class="credit-cost-link">12 kredit</a> (berubah sesuai model/resolusi/durasi/output)
@@ -942,43 +984,8 @@ async function runFlowProjectCreationTiktokDaster({
       await agreeFlowImageRights(cdp, onProgress, sleep);
 
       onProgress('Menunggu gambar storyboard selesai diunggah ke prompt (100%)...');
-      const startUploadWait = Date.now();
-      let uploadFinished = false;
-
-      while (Date.now() - startUploadWait < 60000) {
-        const checkResult = await cdp.send('Runtime.evaluate', {
-          expression: `
-            (() => {
-              const allText = document.body.innerText || '';
-              const percentMatch = allText.match(/\\b(\\d{1,2})%\\b/);
-              const isPercentActive = !!percentMatch;
-
-              const isSpinnerActive = !!document.querySelector('.loading-percentage, mat-progress-spinner, [role="progressbar"], circle[stroke-dasharray]');
-
-              const editor = document.querySelector('flow-rich-text-editor, .ProseMirror');
-              const hasChip = !!editor?.querySelector('flow-image-chip, img, [data-node-type="image"], .chip');
-
-              return { isPercentActive, isSpinnerActive, hasChip, currentPercent: percentMatch ? percentMatch[1] : '100' };
-            })()
-          `,
-          returnByValue: true
-        }).catch(() => null);
-
-        await agreeFlowImageRights(cdp, onProgress, sleep);
-        const state = checkResult?.result?.value;
-        if (state) {
-          if (state.isPercentActive) {
-            onProgress(`Mengunggah gambar: ${state.currentPercent}%...`);
-          } else if (!state.isSpinnerActive) {
-            uploadFinished = true;
-            break;
-          }
-        }
-        await sleep(2000);
-      }
-
-      await sleep(2500);
-      onProgress('Gambar storyboard selesai diunggah 100%.');
+      // Selesai hanya bila persen upload hilang & chip gambar termuat; gagal/macet → error, prompt tidak dikirim
+      await waitFlowImageUpload({ cdp, expectedChips: 1, onProgress, sleep, label: 'Gambar storyboard' });
     }
 
     const fullScenesPrompt = buildFull5ScenesPrompt(promptText);
@@ -1144,11 +1151,13 @@ async function runFlowProjectCreationTiktokDaster({
       }
 
       if (state?.status === 'unusual') {
-        throw new Error('Akun Google Flow terkena peringatan aktivitas tidak biasa.');
+        throw new Error(flowUnusualActivityMessage(targetAcc && targetAcc.name));
       }
 
       if (state?.status === 'error') {
         const info = jelaskanErrorFlow(state.message);
+        // Ditolak karena aktivitas tidak biasa → hentikan, JANGAN tekan "Coba lagi"
+        if (isUnusualActivityError(state.message)) throw new Error(flowUnusualActivityMessage(targetAcc && targetAcc.name));
         if (state.canSilent && renderRetryCount < MAX_RENDER_RETRY) {
           renderRetryCount++;
           onProgress(`[Flow Gagal] ${state.message} → Mode video senyap & coba lagi (${renderRetryCount}/${MAX_RENDER_RETRY})...`);
@@ -1437,10 +1446,10 @@ async function runFlowProjectCreationTiktokDaster({
           ? `[Rotasi Akun] Kartu video di ${targetAcc.name} gagal ${5}x → pindah ke akun Flow lain.`
           : accountFailure === 'credits'
           ? `[Rotasi Akun] Kredit ${targetAcc.name} habis → ditandai 0 kredit.`
-          : `[Rotasi Akun] ${targetAcc.name} ditandai Flow → diistirahatkan ${FLOW_BLOCK_MS / 3600000} jam.`);
+          : `[Akun Flow] ${targetAcc.name} ditandai Flow → tidak dipakai ${FLOW_BLOCK_MS / 3600000} jam (kebijakan aplikasi).`);
       } catch (e) {}
     }
-    return { success: false, error: err.message, accountUnavailable: Boolean(accountFailure) };
+    return { success: false, error: err.message, accountUnavailable: Boolean(accountFailure), unusualActivity: isUnusualActivityError(err.message) };
   }
 }
 
@@ -1452,6 +1461,7 @@ module.exports = {
 // Penjelasan error kartu Google Flow untuk log aplikasi + apakah layak dicoba ulang
 function jelaskanErrorFlow(message) {
   const m = String(message || '').toLowerCase();
+  if (isUnusualActivityError(m)) return { alasan: 'Google Flow mendeteksi aktivitas tidak biasa (bukan kredit habis).', bisaUlang: false };
   if (/kebijakan|policy|guideline|pedoman|melanggar|violat|unsafe|tidak aman|sensitive|sensitif|prominent|tokoh|minor|anak/.test(m)) {
     return { alasan: 'Prompt / gambar ditolak filter keamanan Google Flow (kebijakan konten). Ubah storyboard atau gambar produk.', bisaUlang: false };
   }
@@ -1478,6 +1488,8 @@ for (const key of Object.keys(module.exports)) {
       if (res && res.success === false && res.error && !/dibatalkan/i.test(res.error) && typeof options.onProgress === 'function') {
         options.onProgress(`[Flow Gagal] ${res.error}`);
       }
+      // Aktivitas tidak biasa → berhenti, tanpa coba ulang / pindah akun otomatis
+      if (res?.unusualActivity) break;
       if (!res?.accountUnavailable || attempt === MAX_ACCOUNT_SWITCH) break;
       if (typeof options.onProgress === 'function') options.onProgress(`[Rotasi Akun] Mencoba akun Flow lain (${attempt + 1}/${MAX_ACCOUNT_SWITCH})...`);
     }

@@ -200,7 +200,7 @@ async function processPendingSchedulesQueue(mainWindow, showDesktopNotification)
   const dueItem = pendingList.find((s) => new Date(s.scheduleTime) <= now);
   const earlyItem = dueItem ? null : pendingList
     .filter((s) => {
-      if (!['tiktok', 'facebook', 'instagram'].includes((s.platform || '').toLowerCase()) || s.noTikTokSchedule) return false;
+      if (!['tiktok', 'facebook', 'instagram', 'youtube'].includes((s.platform || '').toLowerCase()) || s.noTikTokSchedule) return false;
       const left = new Date(s.scheduleTime).getTime() - now.getTime();
       return left > EARLY_MIN_MS && left <= EARLY_MAX_MS;
     })
@@ -218,6 +218,95 @@ async function processPendingSchedulesQueue(mainWindow, showDesktopNotification)
   const fbTarget = isFacebook ? resolveFacebookPage(currentItem) : null;
   // Jadwal lama tidak menyimpan accountUsername → pakai accountId (username akun yang dipilih)
   const accountUser = targetUsername || targetAccountId || (isTikTok ? 'karuna_id' : TARGET_USERNAME);
+
+  // YouTube: upload lewat YouTube Studio (Chrome profil channel). Jadwal ke depan → Jadwal bawaan YouTube.
+  if ((currentItem.platform || '').toLowerCase() === 'youtube') {
+    const sendYt = (status, message) => {
+      const updated = updateScheduleStatus(currentItem.id, status, message);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('upload-status', { id: currentItem.id, status, message });
+        mainWindow.webContents.send('schedules-updated', updated);
+      }
+    };
+    const ytFiles = currentItem.mediaPaths || (currentItem.filePath ? [currentItem.filePath] : []);
+    const ytVideo = ytFiles.find((f) => f && fs.existsSync(f));
+    if (!ytVideo) { sendYt('failed', 'Berkas video YouTube tidak ditemukan di komputer.'); return; }
+    let ytAcc = null;
+    try {
+      const reg = require('../platforms/instagram/sessionManager').getAccountsRegistry();
+      ytAcc = (reg.accounts || []).find((a) => a.id === currentItem.accountRef)
+        || (reg.accounts || []).find((a) => a.platform === 'youtube'
+          && String(a.username || '').toLowerCase() === String(currentItem.accountUsername || '').toLowerCase());
+    } catch (e) {}
+    if (!ytAcc || !ytAcc.profileDir || !fs.existsSync(ytAcc.profileDir)) {
+      sendYt('failed', 'Channel YouTube jadwal ini tidak ditemukan / sesinya hilang. Login YouTube ulang di Kelola Akun.');
+      return;
+    }
+    if (isScheduleRunnerBusy) return;
+    isScheduleRunnerBusy = true;
+    try {
+      const { uploadToYouTube } = require('../platforms/youtube/youtubeStudio');
+      const caption = String(currentItem.caption || '');
+      const firstLine = caption.split('\n').map((l) => l.trim()).find(Boolean) || '';
+      sendYt('running', 'Menyiapkan upload YouTube...');
+      const res = await uploadToYouTube({
+        profileDir: ytAcc.profileDir,
+        channelId: ytAcc.channelId,
+        videoPath: ytVideo,
+        title: currentItem.youtubeTitle || firstLine.replace(/#\S+/g, '').trim() || firstLine,
+        description: caption,
+        productQueries: currentItem.youtubeProductQueries || [],
+        scheduleAt: useTikTokSchedule ? new Date(currentItem.scheduleTime).toISOString() : '',
+        onProgress: (msg) => {
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('upload-status', { id: currentItem.id, status: 'running', message: msg });
+        }
+      });
+      if (useTikTokSchedule && !(res && res.success && res.youtubeScheduled)) {
+        throw new Error(res?.message || 'Jadwal YouTube gagal.');
+      }
+      if (res && res.success) {
+        const l = loadSchedulesList();
+        const it = l.find((x) => String(x.id) === String(currentItem.id));
+        if (it) {
+          if (res.videoUrl) it.youtubeUrl = res.videoUrl;
+          if (res.youtubeScheduled) {
+            it.tiktokScheduled = true;
+            it.tiktokScheduledFor = res.scheduledFor || '';
+            if (res.scheduledFor && new Date(res.scheduledFor).getTime() !== new Date(it.scheduleTime).getTime()) {
+              if (!it.originalScheduleTime) it.originalScheduleTime = it.scheduleTime;
+              it.scheduleTime = res.scheduledFor;
+            }
+          }
+          saveSchedulesList(l);
+        }
+        sendYt('success', res.message || 'Video berhasil diupload ke YouTube.');
+        if (typeof showDesktopNotification === 'function') {
+          showDesktopNotification(res.youtubeScheduled ? 'Terjadwal di YouTube ✅' : 'Upload YouTube Berhasil! 🎉', `${ytAcc.name || ytAcc.username}: ${res.message || ''}`, true);
+        }
+      } else {
+        sendYt('failed', res?.message || 'Upload YouTube gagal.');
+      }
+    } catch (e) {
+      if (useTikTokSchedule) {
+        // Jadwal YouTube gagal → kembali menunggu & diupload langsung saat jam jadwal
+        const l = loadSchedulesList();
+        const it = l.find((x) => String(x.id) === String(currentItem.id));
+        if (it) {
+          it.status = 'pending';
+          it.noTikTokSchedule = true;
+          it.errorMessage = `Jadwal YouTube gagal (${e.message}) → akan diupload saat jam jadwal.`;
+          it.updatedAt = new Date().toISOString();
+          saveSchedulesList(l);
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('schedules-updated', l);
+        }
+      } else {
+        sendYt('failed', `Upload YouTube gagal: ${e.message}`);
+      }
+    } finally {
+      isScheduleRunnerBusy = false;
+    }
+    return;
+  }
 
   // Shopee Video: posting otomatis lewat HP Android asli + Tap-Server (ADB).
   if ((currentItem.platform || '').toLowerCase() === 'shopee') {

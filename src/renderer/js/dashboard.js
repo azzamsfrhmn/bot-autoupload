@@ -16,6 +16,9 @@ import { initLoadingIndicator } from './modules/loadingIndicator.js';
 import { initVideoGenManager, startVideoTimer, stopVideoTimer } from '../../core/videoGenManager.js';
 import { initRemotionManager } from './modules/remotionManager.js';
 import { initKartun3DForm, getKartun3DState, removeKartunQueueItem } from './modules/kartun3dForm.js';
+import { initSerial3DForm, getSerial3DState } from './modules/serial3dForm.js';
+import { initPovHpForm, getPovHpState } from './modules/povHpForm.js';
+import { initPovExtraProducts, getPovExtraProducts } from './modules/povExtraProducts.js';
 
 // State Konsep Reels Aktif (Default: 'jj')
 let currentReelsConcept = 'jj';
@@ -64,12 +67,15 @@ async function initDashboardApp() {
   try {
     if (localStorage.getItem('showPrivateConcepts') === '1') document.body.classList.add('show-private-concepts');
   } catch (e) {}
-  document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.shiftKey && (e.key === 'K' || e.key === 'k')) {
+  // capture + e.code: tetap jalan walau fokus di kolom teks / layout keyboard lain / elemen lain menghentikan event
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'KeyK' || e.key === 'K' || e.key === 'k')) {
+      e.preventDefault();
       const on = document.body.classList.toggle('show-private-concepts');
       try { localStorage.setItem('showPrivateConcepts', on ? '1' : '0'); } catch (err) {}
+      console.log('[Dashboard] Konsep pribadi', on ? 'ditampilkan' : 'disembunyikan');
     }
-  });
+  }, true);
 
   // 0. Kontrol Jendela Kustom (Custom Title Bar Frameless)
   const btnWinMinimize = document.getElementById('btnWinMinimize');
@@ -194,6 +200,9 @@ async function initDashboardApp() {
 
   // 8.1b Konsep 3D Kartun: sumber naskah, Tempel JSON & pratinjau adegan
   try { initKartun3DForm(); } catch (e) { console.error('[Dashboard Error] Gagal memuat form 3D Kartun:', e); }
+  try { initSerial3DForm(); } catch (e) { console.error('[Dashboard Error] Gagal memuat form Serial Animasi:', e); }
+  try { initPovHpForm(); } catch (e) { console.error('[Dashboard Error] Gagal memuat form POV HP:', e); }
+  try { initPovExtraProducts(); } catch (e) { console.error('[Dashboard Error] Gagal memuat foto produk tambahan POV:', e); }
 
   // 8.2 Konsep Remotion (form di halaman Video Reels)
   try {
@@ -241,7 +250,7 @@ async function initDashboardApp() {
     }
   }
 
-  // Durasi hanya bisa diatur di Omni 1.1 Flash; model Veo di Google Flow selalu 8 detik
+  // Durasi hanya bisa diatur di Omni 1.2 Flash; model Veo di Google Flow selalu 8 detik
   const tiktokModelSelect = document.getElementById('tiktokFlowModelSelect');
   const tiktokDurationSelect = document.getElementById('tiktokFlowDurationSelect');
 
@@ -295,9 +304,30 @@ async function initDashboardApp() {
           conceptIndicatorBadge.style.background = 'rgba(53, 178, 159, 0.15)';
           conceptIndicatorBadge.style.borderColor = 'rgba(53, 178, 159, 0.35)';
         }
+      } else if (currentReelsConcept === 'pov2') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: POV Tangan V2';
+          conceptIndicatorBadge.style.color = '#6fcdbd';
+          conceptIndicatorBadge.style.background = 'rgba(53, 178, 159, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(53, 178, 159, 0.35)';
+        }
+      } else if (currentReelsConcept === 'povhp') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: POV HP';
+          conceptIndicatorBadge.style.color = '#6fcdbd';
+          conceptIndicatorBadge.style.background = 'rgba(53, 178, 159, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(53, 178, 159, 0.35)';
+        }
       } else if (currentReelsConcept === 'carakerja3d') {
         if (conceptIndicatorBadge) {
           conceptIndicatorBadge.textContent = 'Konsep: 3D Cara Kerja';
+          conceptIndicatorBadge.style.color = '#6fcdbd';
+          conceptIndicatorBadge.style.background = 'rgba(53, 178, 159, 0.15)';
+          conceptIndicatorBadge.style.borderColor = 'rgba(53, 178, 159, 0.35)';
+        }
+      } else if (currentReelsConcept === 'serial3d') {
+        if (conceptIndicatorBadge) {
+          conceptIndicatorBadge.textContent = 'Konsep: Serial Animasi Day-N';
           conceptIndicatorBadge.style.color = '#6fcdbd';
           conceptIndicatorBadge.style.background = 'rgba(53, 178, 159, 0.15)';
           conceptIndicatorBadge.style.borderColor = 'rgba(53, 178, 159, 0.35)';
@@ -639,11 +669,12 @@ async function initDashboardApp() {
       const isTikTok = currentPlatform === 'tiktok';
       const isFacebook = currentPlatform === 'facebook';
       const isShopee = currentPlatform === 'shopee';
+      const isYoutube = currentPlatform === 'youtube';
 
       // Tombol "Bagikan juga ke Facebook" di Buat Jadwal hanya untuk akun Instagram
       const shareRow = document.getElementById('rowShareToFacebook');
       const shareToggle = document.getElementById('toggleShareToFacebook');
-      if (shareRow) shareRow.style.display = (!isTikTok && !isFacebook && !isShopee) ? 'flex' : 'none';
+      if (shareRow) shareRow.style.display = (!isTikTok && !isFacebook && !isShopee && !isYoutube) ? 'flex' : 'none';
       if (shareToggle && !shareToggle.dataset.bound) {
         shareToggle.dataset.bound = '1';
         try { shareToggle.checked = localStorage.getItem('igShareToFacebook') !== '0'; } catch (e) { shareToggle.checked = true; }
@@ -661,8 +692,10 @@ async function initDashboardApp() {
       if (hintEl) {
         hintEl.innerHTML = isTikTok
           ? 'Video di-upload lebih awal & dijadwalkan langsung di TikTok. Biarkan aplikasi terbuka sampai status <b>Terjadwal di TikTok</b>, setelah itu PC boleh dimatikan.'
+          : isYoutube
+            ? 'Video di-upload lebih awal & dijadwalkan langsung di YouTube Studio. Biarkan aplikasi terbuka sampai status <b>Terjadwal di YouTube</b>, setelah itu PC boleh dimatikan.'
           : isShopee
-            ? 'Akun Shopee aktif: posting otomatis Shopee Video sedang dikembangkan.'
+            ? 'Posting Shopee Video lewat HP Android (Tap Server) saat jam jadwal. PC & HP harus menyala.'
           : isFacebook
             ? 'Reels di-upload lebih awal & dijadwalkan langsung di Facebook Page (Meta Business Suite). Biarkan aplikasi terbuka sampai status <b>Terjadwal di Facebook</b>, setelah itu PC boleh dimatikan. Hanya video (Reels).'
             : 'Postingan di-upload lebih awal & dijadwalkan langsung di Instagram (Schedule content, maks ±25 hari). Biarkan aplikasi terbuka sampai status <b>Terjadwal di Instagram</b>, setelah itu PC boleh dimatikan.';
@@ -675,6 +708,11 @@ async function initDashboardApp() {
           brandIconEl.style.background = 'transparent';
           brandIconEl.style.border = 'none';
           brandIconEl.style.color = '';
+        } else if (isYoutube) {
+          brandIconEl.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31.3 31.3 0 0 0 0 12a31.3 31.3 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31.3 31.3 0 0 0 24 12a31.3 31.3 0 0 0-.5-5.8zM9.6 15.6V8.4l6.3 3.6-6.3 3.6z"/></svg>';
+          brandIconEl.style.background = '#ff0000';
+          brandIconEl.style.border = '1px solid rgba(255, 255, 255, 0.15)';
+          brandIconEl.style.color = '#ffffff';
         } else if (isShopee) {
           brandIconEl.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2a4.5 4.5 0 0 0-4.47 4H4.2a1 1 0 0 0-1 1.07l.9 13.1A2 2 0 0 0 6.1 22h11.8a2 2 0 0 0 2-1.83l.9-13.1a1 1 0 0 0-1-1.07h-3.33A4.5 4.5 0 0 0 12 2zm0 1.8A2.7 2.7 0 0 1 14.65 6h-5.3A2.7 2.7 0 0 1 12 3.8zm.15 5.2c1.6 0 2.6.7 2.9 1.05l-.8 1.1c-.4-.33-1.15-.75-2.1-.75-.9 0-1.4.4-1.4.9 0 .6.7.85 1.75 1.2 1.5.5 2.85 1.1 2.85 2.8 0 1.6-1.35 2.8-3.4 2.8-1.6 0-2.85-.7-3.4-1.3l.85-1.15c.6.55 1.5 1.05 2.55 1.05 1.05 0 1.65-.5 1.65-1.15 0-.75-.75-1-1.85-1.4-1.4-.45-2.7-1.05-2.7-2.6 0-1.45 1.3-2.55 3.1-2.55z"/></svg>';
           brandIconEl.style.background = '#ee4d2d';
@@ -738,6 +776,15 @@ async function initDashboardApp() {
       }
 
       // Shopee: input link produk + status HP; sembunyikan produk TikTok
+      const wrapYoutube = document.getElementById('wrapperScheduleYoutube');
+      if (wrapYoutube) wrapYoutube.style.display = isYoutube ? 'block' : 'none';
+      if (isYoutube) {
+        const wrapTt = document.getElementById('wrapperScheduleTiktokProduct');
+        if (wrapTt) wrapTt.style.display = 'none';
+        const yt = document.getElementById('youtubeTitleInput');
+        const ytc = document.getElementById('youtubeTitleCounter');
+        if (yt && ytc && !yt.dataset.bound) { yt.dataset.bound = '1'; yt.addEventListener('input', () => { ytc.textContent = yt.value.length; }); }
+      }
       const wrapShopee = document.getElementById('wrapperScheduleShopee');
       if (wrapShopee) wrapShopee.style.display = isShopee ? 'block' : 'none';
       if (isShopee) {
@@ -753,6 +800,7 @@ async function initDashboardApp() {
           spanText.textContent = isTikTok
             ? 'Jadwalkan Postingan ke TikTok'
             : isShopee ? 'Jadwalkan Video ke Shopee'
+            : isYoutube ? 'Jadwalkan Video ke YouTube'
             : isFacebook ? 'Jadwalkan Reels ke Facebook Page' : 'Jadwalkan Postingan ke Instagram';
         }
       }
@@ -1381,6 +1429,23 @@ async function initDashboardApp() {
     // 3D Cara Kerja: mesin & pipeline yang sama dengan 3D Kartun (mode narator)
     const isKartun3D = isTikTok && (currentReelsConcept === 'kartun3d' || currentReelsConcept === 'carakerja3d');
     const kartunState = isKartun3D ? getKartun3DState(currentReelsConcept) : null;
+    // Serial Animasi Day-N: tanpa foto; karakter parametrik + naskah JSON (contoh / tempelan) dari form SA
+    const isSerial3D = isTikTok && currentReelsConcept === 'serial3d';
+    const serialState = isSerial3D ? getSerial3DState() : null;
+    if (isSerial3D && !serialState.ready) {
+      // tanpa alert(): dialog bawaan membuat kolom teks Electron macet
+      const gs = document.getElementById('serial3dGenStatus');
+      if (gs) { gs.textContent = '👆 ' + (serialState.reason || 'Lengkapi langkah karakter, premis, dan naskah dulu.'); gs.style.color = '#f87171'; gs.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      return;
+    }
+    // POV HP: foto HP + spek dari form sendiri (plugin ChatGPT POV Gadget Reviewer → 3 klip Flow)
+    const isPovHp = isTikTok && currentReelsConcept === 'povhp';
+    const povHpState = isPovHp ? getPovHpState() : null;
+    if (isPovHp && !povHpState.ready) {
+      const st = document.getElementById('povHpStatus');
+      if (st) { st.textContent = '👆 ' + povHpState.reason; st.style.color = '#f87171'; st.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      return;
+    }
     // Antrian naskah: tiap item = 1 video, dibuat berurutan
     const kartunQueue = kartunState?.source === 'queue' ? kartunState.queue : [];
     if (isKartun3D && kartunState.source === 'queue' && !kartunQueue.length) {
@@ -1391,9 +1456,9 @@ async function initDashboardApp() {
       alert('Tempel JSON naskah yang valid terlebih dahulu.');
       return;
     }
-    if (isTikTok && !isEdu3D && !isKartun3D) {
+    if (isTikTok && !isEdu3D && !isKartun3D && !isSerial3D && !isPovHp) {
       const isJJ = currentReelsConcept === 'jj';
-      const suffix = { daster: 'Daster', sensasi: 'Sensasi', pov: 'Pov' }[currentReelsConcept] || 'JJ';
+      const suffix = { daster: 'Daster', sensasi: 'Sensasi', pov: 'Pov', pov2: 'Pov' }[currentReelsConcept] || 'JJ';
 
       const productInput = document.getElementById(`selectedTiktokProductPath${suffix}`);
 
@@ -1413,7 +1478,7 @@ async function initDashboardApp() {
         return;
       }
       if (!characterPath) {
-        alert(currentReelsConcept === 'pov' ? 'Silakan pilih foto background / latar terlebih dahulu!' : 'Silakan upload foto karakter model Karuna terlebih dahulu!');
+        alert(['pov', 'pov2'].includes(currentReelsConcept) ? 'Silakan pilih foto background / latar terlebih dahulu!' : 'Silakan upload foto karakter model Karuna terlebih dahulu!');
         return;
       }
       if (isJJ && !referencePath) {
@@ -1452,7 +1517,7 @@ async function initDashboardApp() {
       videoType: 'Bahan',
       model: isTikTok
         ? (document.getElementById('tiktokFlowModelSelect')?.value || 'Veo 3.1 - Lite')
-        : (document.getElementById('flowModelSelect')?.value || 'Omni 1.1 Flash'),
+        : (document.getElementById('flowModelSelect')?.value || 'Omni 1.2 Flash'),
       resolution: isTikTok
         ? (document.getElementById('tiktokFlowResolutionSelect')?.value || '720p')
         : (document.getElementById('flowResolutionSelect')?.value || '720p'),
@@ -1463,7 +1528,7 @@ async function initDashboardApp() {
         : (document.getElementById('videoAspectRatio')?.value || '9:16'),
       flowModel: isTikTok
         ? (document.getElementById('tiktokFlowModelSelect')?.value || 'Veo 3.1 - Lite')
-        : (document.getElementById('flowModelSelect')?.value || 'Omni 1.1 Flash'),
+        : (document.getElementById('flowModelSelect')?.value || 'Omni 1.2 Flash'),
       flowResolution: isTikTok
         ? (document.getElementById('tiktokFlowResolutionSelect')?.value || '720p')
         : (document.getElementById('flowResolutionSelect')?.value || '720p'),
@@ -1472,7 +1537,8 @@ async function initDashboardApp() {
       dasterClothingMode: document.querySelector('input[name="dasterClothingMode"]:checked')?.value === 'convert' ? 'convert' : 'original',
       sensasiPose: document.getElementById('sensasiPoseSelect')?.value || 'random',
       // POV Tangan: slot "karakter" berisi foto background
-      backgroundImagePath: currentReelsConcept === 'pov' ? characterPath : '',
+      backgroundImagePath: ['pov', 'pov2'].includes(currentReelsConcept) ? characterPath : '',
+      extraProductImagePaths: ['pov', 'pov2'].includes(currentReelsConcept) ? getPovExtraProducts() : [],
       povVoice: document.getElementById('povVoiceSelect')?.value || 'cewek',
       // 3D Edukasi: topik (diisi AI / manual) & jumlah adegan (suara narator dikunci di layanan)
       eduTopic: document.getElementById('edu3dTopicInput')?.value?.trim() || '',
@@ -1484,6 +1550,19 @@ async function initDashboardApp() {
       kartunSpec: kartunState?.spec || null,
       voiceEngine: kartunState?.voiceEngine || 'gemini',
       geminiVoice: kartunState?.geminiVoice || 'Charon',
+      // Serial Animasi Day-N: karakter preset/parameter, suara Gemini, naskah contoh (id) atau JSON tempelan
+      serialCharacter: serialState?.serialCharacter || '',
+      serialVoice: serialState?.serialVoice || '',
+      serialScriptId: serialState?.serialScriptId || '',
+      serialScript: serialState?.serialScript || null,
+      serialPremise: serialState?.serialPremise || '',
+      serialWorld: serialState?.serialWorld || '',
+      serialPlan: serialState?.serialPlan || '',
+      serialTime: serialState?.serialTime || '',
+      // POV HP
+      phoneImagePaths: povHpState?.photos || [],
+      phoneSpec: povHpState?.spec || '',
+      ...(isPovHp ? { povVoice: povHpState.voice } : {}),
       batchCount: isTikTok ? '1' : (document.getElementById('videoBatchCount')?.value || '1'),
       characterKeyword: isTikTok ? '' : (document.getElementById('videoCharacterKeyword')?.value || 'wanita')
     };
@@ -1510,11 +1589,12 @@ async function initDashboardApp() {
       // Multi-worker: tiap worker membuat 1 video dengan bahan yang sama secara bersamaan.
       // Worker berikutnya mulai 2 detik kemudian (cukup agar Chrome ChatGPT tidak dibuka di detik yang sama).
       // 3D Edukasi membuat 3 klip Flow berurutan per video → selalu 1 worker
-      const workerCount = isTikTok && !isEdu3D && !isKartun3D ? getSelectedWorkerCount() : 1;
+      const workerCount = isTikTok && !isEdu3D && !isKartun3D && !isSerial3D && !isPovHp ? getSelectedWorkerCount() : 1;
       // Loop: video dibuat berulang dengan bahan & setelan yang sama (pelanggan tidak perlu input ulang)
       // Tempel JSON 3D Kartun: 1 JSON = 1 video (loop dimatikan)
       const loopCount = kartunQueue.length ? kartunQueue.length
-        : isTikTok && !payload.kartunSpec ? Math.min(20, Math.max(1, Number(document.getElementById('reelsLoopCount')?.value) || 1)) : 1;
+        // Serial: naskah tetap = 1 video; naskah AI = tiap putaran menulis & merender DAY berikutnya
+        : isTikTok && !payload.kartunSpec && !(isSerial3D && payload.serialScript) ? Math.min(20, Math.max(1, Number(document.getElementById('reelsLoopCount')?.value) || 1)) : 1;
       // Log per worker: videoGenManager menyiapkan panel W1/W2 terpisah bila lebih dari 1 worker
       window.dispatchEvent(new CustomEvent('video-workers-start', { detail: { count: workerCount } }));
 

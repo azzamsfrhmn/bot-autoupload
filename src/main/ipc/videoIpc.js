@@ -12,6 +12,9 @@ const galleryOwner = require('../../core/galleryOwner');
 const { cancelActiveRender } = require('../../services/remotionRenderer');
 const { runEdu3DPipeline } = require('../../services/aiVideoEdu3D');
 const { runKartun3DPipeline } = require('../../services/aiVideoKartun3D');
+const { runSerial3DPipeline } = require('../../services/aiVideoSerial3D');
+const { runPovHpPipeline } = require('../../services/aiVideoPovHp');
+const { runPovV2Pipeline } = require('../../services/aiVideoPovV2');
 
 module.exports = function registerVideoIpc(ipcMain, ctx) {
   const {
@@ -67,12 +70,12 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
         }
       }
     } catch (e) {}
-    return false; // Default nonaktif, sama dengan tampilan sakelar di Pengaturan AI
+    return true; // Default aktif (senyap), sama dengan tampilan sakelar di Pengaturan AI
   }
 
   // Kunci biaya kredit — HARUS sama dengan buildFlowCostKey() di flowVideoRunnerTiktok(Daster).js
   function buildFlowCostKey({ flowModel, flowResolution, flowDuration, flowOutputCount } = {}) {
-    const model = String(flowModel || 'Veo 3.1 - Lite').replace(/google/i, '').toLowerCase().replace(/[\s\-–]+/g, ' ').trim();
+    const model = require('../../services/flowModels').normalizeFlowModel(flowModel).toLowerCase().replace(/[\s\-–]+/g, ' ').trim();
     const res = String(flowResolution || '').includes('360') ? '360p' : '720p';
     const dur = (String(flowDuration || '').match(/\d+/) || ['8'])[0];
     const out = (String(flowOutputCount || '').match(/\d+/) || ['1'])[0];
@@ -274,6 +277,25 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
       return result;
     }
 
+    // Serial Animasi Day-N: naskah JSON + suara Gemini + render three.js di GPU → tanpa ChatGPT, tanpa Flow
+    if (params?.concept === 'serial3d') {
+      const result = await runSerial3DPipeline({
+        ...params,
+        isCancelled: () => videoCancelRequested,
+        onProgress: (status, percent = 50) => {
+          throwIfCancelled();
+          if (win && !win.isDestroyed()) win.webContents.send('video-gen-progress', { status, percent, workerId });
+        }
+      });
+      if (result?.success && win && !win.isDestroyed()) {
+        setTimeout(() => {
+          win.webContents.send('refresh-video-gallery', result);
+          win.webContents.send('flow-video-saved', result);
+        }, 500);
+      }
+      return result;
+    }
+
     const chatgptProfile = await prepareWorkerProfiles(workerId, workerCount, sendProgress);
     sendProgress(perfProfile.describePerfProfile());
 
@@ -302,6 +324,10 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
       // 3D Edukasi: naskah Gemini + 3 klip Flow + narasi TTS (tanpa ChatGPT)
       const runnerFn = params?.concept === 'edu3d'
         ? runEdu3DPipeline
+        : params?.concept === 'pov2'
+        ? runPovV2Pipeline
+        : params?.concept === 'povhp'
+        ? runPovHpPipeline
         : (params?.concept === 'daster' && typeof runTikTokDasterPipeline === 'function')
         ? runTikTokDasterPipeline
         : (params?.concept === 'sensasi' && typeof runTikTokSensasiPipeline === 'function')
@@ -512,8 +538,11 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
     const tries = [
       ['-ss', (dur > 0 ? Math.max(0.5, dur * 0.3) : 1).toFixed(2), '-i', videoPath, '-vf', 'thumbnail=30,scale=360:-2'],
       ['-ss', (dur > 0 ? Math.max(0.2, dur * 0.6) : 2).toFixed(2), '-i', videoPath, '-vf', 'thumbnail=30,scale=360:-2'],
+      // ffmpeg tanpa filter "thumbnail" / filter gagal → ambil 1 frame biasa
+      ['-ss', (dur > 0 ? Math.max(0.5, dur * 0.3) : 1).toFixed(2), '-i', videoPath, '-vf', 'scale=360:-2'],
       ['-i', videoPath, '-vf', 'scale=360:-2']                          // video sangat pendek
     ];
+    let lastErr = '';
     for (const t of tries) {
       try { fs.unlinkSync(tmp); } catch (e) {}
       const res = await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-y', ...t, '-frames:v', '1', tmp]);
@@ -521,15 +550,17 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
         try { fs.renameSync(tmp, thumb); } catch (e) { fs.copyFileSync(tmp, thumb); try { fs.unlinkSync(tmp); } catch (x) {} }
         return thumb;
       }
+      lastErr = `code ${res.code}: ${String(res.err || '').trim().slice(-300)}`;
     }
     try { fs.unlinkSync(tmp); } catch (e) {}
+    console.warn('[thumb] gagal', path.basename(videoPath), lastErr);
     return '';
   }
   ipcMain.handle('ensure-video-thumb', async (event, videoPath) => {
     try {
       const p = String(videoPath || '').replace(/^file:\/\/\/?/, '');
       if (!p || !fs.existsSync(p)) return { success: false, thumb: '' };
-      const job = thumbQueue.then(() => makeVideoThumb(p));
+      const job = thumbQueue.then(() => makeVideoThumb(p)).catch((e) => { console.warn('[thumb]', e.message); return ''; });
       thumbQueue = job.catch(() => '');
       return { success: true, thumb: await job };
     } catch (e) {
@@ -677,7 +708,7 @@ module.exports = function registerVideoIpc(ipcMain, ctx) {
   // Simpan setelan Flow dari UI (saklar Mode Headless); field lain di config tidak diubah
   ipcMain.handle('save-flow-accounts-config', async (e, patch = {}) => {
     const cfg = getFlowAccountsConfig();
-    if (typeof patch.headless === 'boolean') cfg.headless = patch.headless;
+    if (typeof patch.headless === 'boolean') { cfg.headless = patch.headless; cfg.headlessDefaultOn = true; }
     saveFlowAccountsConfig(cfg);
     return { success: true, headless: cfg.headless };
   });

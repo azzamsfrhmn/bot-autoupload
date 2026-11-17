@@ -57,7 +57,7 @@ function getFlowHeadlessConfig(customRoot) {
       }
     }
   } catch (e) {}
-  return false;
+  return true; // default: mode senyap (headless) aktif
 }
 
 function resolveSharedProfileDir(customPath, baseDir) {
@@ -462,6 +462,7 @@ async function runTikTokPovPipeline(options = {}) {
   const {
     bannerImagePath,
     backgroundImagePath,
+    extraProductImagePaths = [],
     povVoice = 'cewek',
     flowRatio = '9:16',
     flowModel = 'Veo 3.1 - Lite',
@@ -525,6 +526,11 @@ async function runTikTokPovPipeline(options = {}) {
     if (!backgroundImagePath || !fs.existsSync(backgroundImagePath)) {
       throw new Error('Foto background belum dipilih.');
     }
+    // Foto produk utama + tambahan (sisi lain / detail), lalu background paling akhir
+    const extraProducts = (Array.isArray(extraProductImagePaths) ? extraProductImagePaths : [])
+      .filter((p) => p && p !== localProductBannerPath && fs.existsSync(p)).slice(0, 3);
+    const productPhotos = [localProductBannerPath, ...extraProducts];
+    if (extraProducts.length) onProgress(`Foto produk: ${productPhotos.length} gambar (+ 1 background).`);
 
     syncFromLegacyProfileIfEmpty(targetUserDataDir, ROOT_DIR);
     purgeLocks(targetUserDataDir);
@@ -626,11 +632,11 @@ async function runTikTokPovPipeline(options = {}) {
     }
     await waitForSmartBotResponse(page, 75000, onProgress);
 
-    onProgress('Tahap 3: Mengunggah foto produk dan foto background...');
-    const isUploaded = await uploadFilesToChatGPT(page, [localProductBannerPath, backgroundImagePath]);
+    onProgress(`Tahap 3: Mengunggah ${productPhotos.length} foto produk dan foto background...`);
+    const isUploaded = await uploadFilesToChatGPT(page, [...productPhotos, backgroundImagePath]);
     if (!isUploaded) throw new Error('Gagal mengunggah foto produk dan background ke ChatGPT.');
     await sleep(1500);
-    // Sama seperti manual: cukup kirim 2 foto tanpa teks
+    // Sama seperti manual: cukup kirim foto tanpa teks
     await triggerSend(page);
     onProgress('Tahap 4: Menunggu ChatGPT membuat prompt gambar + video + VO...');
 
@@ -682,7 +688,7 @@ async function runTikTokPovPipeline(options = {}) {
       workerId: Number(options.workerId) || 1,
       projectFolder: currentProjectDir,
       // Foto produk + background ditempel ke Flow sebagai referensi gambar ("use image preference")
-      referenceImagePaths: [localProductBannerPath, backgroundImagePath],
+      referenceImagePaths: [...productPhotos, backgroundImagePath],
       promptText: formattedPromptsResult,
       flowRatio: flowRatio || '9:16',
       flowModel: flowModel || 'Veo 3.1 - Lite',
@@ -727,5 +733,11 @@ async function runTikTokPovPipeline(options = {}) {
 }
 
 module.exports = {
-  runTikTokPovPipeline
+  runTikTokPovPipeline,
+  // Dipakai ulang konsep POV HP (aiVideoPovHp.js)
+  helpers: {
+    sleep, getFlowHeadlessConfig, resolveSharedProfileDir, syncFromLegacyProfileIfEmpty, purgeLocks,
+    killZombieChromeOnPort, getOriginalChromeExecutablePath, waitForChromeReady, uploadFilesToChatGPT,
+    findChatInputWithRetry, triggerSend, fillAndSendChat, waitForSmartBotResponse, STOP_BTN_SELECTOR
+  }
 };

@@ -25,7 +25,7 @@ function isTikTokScheduledAhead(item) {
   return Boolean(flagged) && new Date(item.scheduleTime).getTime() > Date.now();
 }
 
-const platformName = (item) => ({ facebook: 'Facebook', instagram: 'Instagram' })[String(item.platform || '').toLowerCase()] || 'TikTok';
+const platformName = (item) => ({ facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube', shopee: 'Shopee' })[String(item.platform || '').toLowerCase()] || 'TikTok';
 
 function setStatus(text, type = 'success') {
   const statusAlert = document.getElementById('statusAlert');
@@ -880,7 +880,8 @@ export function initScheduleManager() {
     pov: 'POV Tangan: voice over tetap, musik -30 dB',
     edu3d: '3D Edukasi: narasi tetap, musik -30 dB',
     kartun3d: '3D Kartun: dialog & musik video tetap, musik TikTok -30 dB',
-    carakerja3d: '3D Cara Kerja: narasi & musik video tetap, musik TikTok -30 dB'
+    carakerja3d: '3D Cara Kerja: narasi & musik video tetap, musik TikTok -30 dB',
+    serial3d: 'Serial Animasi: suara karakter & musik video tetap, musik TikTok -30 dB'
   };
   let selectedScheduleConcept = '';
   const conceptButtons = document.querySelectorAll('.schedule-concept-btn');
@@ -909,6 +910,7 @@ export function initScheduleManager() {
     if (/^video_edu3d_/.test(name)) return 'edu3d';
     if (/^video_kartun3d_/.test(name)) return 'kartun3d';
     if (/^video_carakerja3d_/.test(name)) return 'carakerja3d';
+    if (/^video_serial3d_/.test(name)) return 'serial3d';
     if (/^video_remotion_video_/.test(name)) return 'pov';
     if (/^(video_tiktok_|jj_capcut_)/.test(name)) return 'jj';
     return '';
@@ -1026,6 +1028,10 @@ export function initScheduleManager() {
           : null,
         // Shopee: link produk affiliate (1 per baris) untuk keranjang kuning
         shopeeProductLinks: (document.getElementById('shopeeProductLinks')?.value || '')
+          .split('\n').map((s) => s.trim()).filter(Boolean),
+        // YouTube: judul & produk YouTube Shopping
+        youtubeTitle: (document.getElementById('youtubeTitleInput')?.value || '').trim(),
+        youtubeProductQueries: (document.getElementById('youtubeProductQueries')?.value || '')
           .split('\n').map((s) => s.trim()).filter(Boolean)
       });
 

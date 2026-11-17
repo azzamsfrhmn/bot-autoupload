@@ -49,12 +49,14 @@ async function hasPluginChip(page, pluginName) {
  * Buka chat baru, pilih plugin lewat @, lalu kirim pesan pertama (mis. "RUN").
  * Melempar error yang jelas bila plugin belum ditambahkan di akun ChatGPT.
  */
-async function startPluginChat(page, pluginName, firstMessage = 'RUN', onProgress = () => {}) {
+async function startPluginChat(page, pluginName, firstMessage = 'RUN', onProgress = () => {}, { prepare } = {}) {
   onProgress(`Membuka chat baru ChatGPT dengan plugin @${pluginName}...`);
   await page.goto(NEW_CHAT_URL, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
   const input = page.locator(INPUT_SELECTOR).first();
   await input.waitFor({ state: 'visible', timeout: 90000 });
   await sleep(1500);
+  // Opsional: atur mode/model ChatGPT dulu (mis. POV HP memakai mode Work + GPT Sol Medium)
+  if (typeof prepare === 'function') await prepare(page);
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     await input.click().catch(() => {});

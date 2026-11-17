@@ -489,23 +489,52 @@ module.exports = function registerShowcaseIpc(ipcMain, ctx) {
     }
   }
 
-  // Tunggu tabel etalase benar-benar terisi (atau memang kosong) sebelum dibaca
-  async function waitForShowcaseRows(page, timeoutMs = 20000) {
+  // Tunggu tabel etalase benar-benar terisi (atau memang kosong), lalu baca SEMUA halaman (20 produk per halaman)
+  async function waitForShowcaseRows(page, timeoutMs = 45000) {
     const startedAt = Date.now();
     const deadline = startedAt + timeoutMs;
+    // "24 products in showcase" / "24 produk di etalase"
+    const readTotal = () => page.evaluate(() => {
+      const m = (document.body?.innerText || '').match(/([\d.,]+)\s*(?:products? in showcase|produk di etalase|produk dalam etalase)/i);
+      return m ? Number(m[1].replace(/[.,]/g, '')) : -1;
+    }).catch(() => -1);
     let items = [];
     while (Date.now() < deadline) {
       items = await scrapeProductsFromPage(page);
-      if (items.length > 0) {
-        await page.waitForTimeout(800);
-        return await scrapeProductsFromPage(page);
-      }
+      if (items.length > 0) break;
+      if (await readTotal() === 0) return [];
       const isEmptyTable = await page.evaluate(() => !!document.querySelector('.arco-empty, .arco-table-no-data')).catch(() => false);
-      // Tanda "kosong" bisa muncul sekilas sebelum data datang: percayai setelah 6 detik
-      if (isEmptyTable && Date.now() - startedAt > 6000) return [];
+      // Tanda "kosong" bisa muncul lama sebelum data datang (internet lambat): percayai setelah 20 detik
+      if (isEmptyTable && Date.now() - startedAt > 20000) return [];
       await page.waitForTimeout(1000);
     }
-    return items;
+    if (!items.length) return [];
+    await page.waitForTimeout(800);
+    const all = new Map((await scrapeProductsFromPage(page)).map((p) => [p.productId, p]));
+    const total = await readTotal();
+
+    // Halaman berikutnya (paginasi arco)
+    for (let pg = 0; pg < 100 && (total < 0 || all.size < total); pg++) {
+      const next = page.locator('.arco-pagination-item-next, li[aria-label="Next"], button[aria-label="Next"]').first();
+      if (!(await next.isVisible().catch(() => false))) break;
+      const cls = (await next.getAttribute('class').catch(() => '')) || '';
+      if (/disabled/.test(cls) || (await next.getAttribute('aria-disabled').catch(() => '')) === 'true') break;
+      const before = [...(await scrapeProductsFromPage(page))].map((p) => p.productId).join(',');
+      await next.click({ timeout: 5000 }).catch(() => {});
+      let changed = false;
+      for (let t = 0; t < 30 && !changed; t++) {
+        await page.waitForTimeout(500);
+        const now = await scrapeProductsFromPage(page);
+        if (now.length && now.map((p) => p.productId).join(',') !== before) {
+          await page.waitForTimeout(600);
+          (await scrapeProductsFromPage(page)).forEach((p) => { if (!all.has(p.productId)) all.set(p.productId, p); });
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+    console.log('[Showcase] Total di TikTok:', total, '| terbaca:', all.size);
+    return [...all.values()];
   }
 
   async function scrapeProductsFromPage(page) {
@@ -577,13 +606,14 @@ module.exports = function registerShowcaseIpc(ipcMain, ctx) {
   async function syncShowcaseFromTikTok(activeUser) {
     const profileDir = resolveActiveProfileDir(activeUser);
     const chromeExe = getOriginalChromeExecutablePath();
+    console.log('[Showcase] Sinkron mulai:', activeUser, '| profil:', profileDir);
     if (!chromeExe || !fs.existsSync(profileDir)) {
       const fallback = loadCachedShowcaseProducts(activeUser);
       return { success: true, data: fallback, account: activeUser };
     }
 
     // Chrome bot yang sedang terbuka dengan profil ini (port acak) dipakai langsung
-    const candidatePorts = [...findProfileCdpPorts(profileDir), 53800, 54000, 54100, 53888, 52000];
+    const candidatePorts = findProfileCdpPorts(profileDir) /* hanya Chrome milik profil akun ini */;
     let browser = null;
     for (const p of candidatePorts) {
       try {
@@ -615,9 +645,12 @@ module.exports = function registerShowcaseIpc(ipcMain, ctx) {
         page = context.pages()[0] || await context.newPage();
       }
 
+      console.log('[Showcase] Chrome:', tempProc ? 'baru (luar layar)' : 'pakai yang terbuka');
       await ensureTikTokShopAuthenticated(context, page, activeUser);
+      console.log('[Showcase] Halaman:', page.url());
 
       const items = await waitForShowcaseRows(page);
+      console.log('[Showcase] Produk terbaca:', items.length, '| URL akhir:', page.url());
 
       if (items.length > 0) {
         saveShowcaseCacheAllVariants(items, activeUser);
@@ -661,7 +694,7 @@ module.exports = function registerShowcaseIpc(ipcMain, ctx) {
     let procToClose = null;
 
     try {
-      const activePorts = [...findProfileCdpPorts(profileDir), 53800, 54000, 54100, 53888, 52000];
+      const activePorts = findProfileCdpPorts(profileDir) /* hanya Chrome milik profil akun ini */;
       for (const p of activePorts) {
         try {
           browser = await chromium.connectOverCDP(`http://127.0.0.1:${p}`);
@@ -808,7 +841,7 @@ module.exports = function registerShowcaseIpc(ipcMain, ctx) {
     let procToClose = null;
 
     try {
-      const activePorts = [...findProfileCdpPorts(profileDir), 53800, 54000, 54100, 53888, 52000];
+      const activePorts = findProfileCdpPorts(profileDir) /* hanya Chrome milik profil akun ini */;
       for (const p of activePorts) {
         try {
           browser = await chromium.connectOverCDP(`http://127.0.0.1:${p}`);
@@ -955,7 +988,7 @@ module.exports = function registerShowcaseIpc(ipcMain, ctx) {
     let procToClose = null;
 
     try {
-      const activePorts = [...findProfileCdpPorts(profileDir), 53800, 54000, 54100, 53888, 52000];
+      const activePorts = findProfileCdpPorts(profileDir) /* hanya Chrome milik profil akun ini */;
       for (const p of activePorts) {
         try {
           browser = await chromium.connectOverCDP(`http://127.0.0.1:${p}`);

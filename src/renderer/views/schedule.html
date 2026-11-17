@@ -37,6 +37,7 @@
         <button type="button" class="mode-btn schedule-concept-btn" data-concept="pov" title="Suara asli (voice over) tetap, musik -30 dB">POV Tangan</button>
         <button type="button" class="mode-btn schedule-concept-btn" data-concept="edu3d" title="Narasi AI tetap, musik -30 dB">3D Edukasi</button>
         <button type="button" class="mode-btn schedule-concept-btn" data-concept="kartun3d" title="Dialog & musik bawaan video tetap, musik TikTok -30 dB">3D Kartun</button>
+        <button type="button" class="mode-btn schedule-concept-btn" data-concept="serial3d" title="Suara karakter & musik bawaan video tetap, musik TikTok -30 dB">Serial Animasi</button>
         <button type="button" class="mode-btn schedule-concept-btn" data-concept="carakerja3d" title="Narasi & musik bawaan video tetap, musik TikTok -30 dB">3D Cara Kerja</button>
       </div>
     </div>
@@ -65,6 +66,21 @@
       </div>
       <input type="text" id="scheduleLinkTitle" class="input-box" maxlength="30" placeholder="Contoh: Daster Adem Busui Friendly" style="width: 100%; height: 38px; font-size: 12px;">
       </div>
+    </div>
+
+    <!-- YOUTUBE: judul + produk YouTube Shopping -->
+    <div id="wrapperScheduleYoutube" class="form-group" style="margin-bottom: 14px; display: none;">
+      <div class="form-label-row">
+        <label for="youtubeTitleInput" class="form-label" style="font-size: 12px; color: #fff;">Judul Video YouTube</label>
+        <span class="form-hint" style="font-size: 11px;"><span id="youtubeTitleCounter">0</span> / 100 · kosong = baris pertama caption</span>
+      </div>
+      <input type="text" id="youtubeTitleInput" class="input-box" maxlength="100" placeholder="Contoh: Daster Adem Busui Friendly #shorts" style="width: 100%; height: 38px; font-size: 12px;">
+      <div class="form-label-row" style="margin-top: 10px;">
+        <label for="youtubeProductQueries" class="form-label" style="font-size: 12px; color: #fff;">Produk YouTube Shopping (opsional)</label>
+        <span class="form-hint" style="font-size: 11px;">1 nama / link produk per baris</span>
+      </div>
+      <textarea id="youtubeProductQueries" rows="2" class="input-box" placeholder="Nama produk atau link produk (hanya channel yang sudah bergabung YouTube Shopping)" style="width:100%; font-size:12px;"></textarea>
+      <div class="form-hint" style="font-size:11px; margin-top:6px;">Video vertikal ≤ 3 menit otomatis jadi <b>Shorts</b>; video horizontal / lebih panjang jadi video biasa. Caption dipakai sebagai deskripsi.</div>
     </div>
 
     <!-- SHOPEE: posting lewat HP Android (ADB + Tap Server) -->
