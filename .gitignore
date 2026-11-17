@@ -512,3 +512,6 @@ google-flow-api-main/
 *.idsig
 *.keystore
 *.jks
+
+# Secret lokal
+*.local.js
